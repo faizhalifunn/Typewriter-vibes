@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <radialGradient id="bgGlow" cx="50%" cy="62%" r="54%">
+      <stop offset="0%" stop-color="#ffb85c" stop-opacity="0.34" />
+      <stop offset="55%" stop-color="#2a2118" stop-opacity="0.45" />
+      <stop offset="100%" stop-color="#14110e" stop-opacity="1" />
+    </radialGradient>
+    <linearGradient id="brass" x1="120" y1="90" x2="390" y2="420" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#f5dca8" />
+      <stop offset="50%" stop-color="#d7a760" />
+      <stop offset="100%" stop-color="#8b6837" />
+    </linearGradient>
+    <linearGradient id="beam" x1="256" y1="360" x2="256" y2="96" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ffd58f" stop-opacity="0.52" />
+      <stop offset="100%" stop-color="#ffd58f" stop-opacity="0" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="108" fill="#14110e" />
+  <rect width="512" height="512" rx="108" fill="url(#bgGlow)" />
+  <polygon points="236,368 276,368 386,106 126,106" fill="url(#beam)" />
+  <!-- Crisp geometric typewriter slab-serif "A" (font-independent vector path) -->
+  <path
+    d="M244 128 H268 L334 294 H352 V312 H288 V294 H305 L291 258 H221 L207 294 H224 V312 H160 V294 H178 L244 128 Z M256 164 L229 238 H283 L256 164 Z"
+    fill="url(#brass)"
+  />
+  <!-- Metallic Typeguide V-notch & upward glow filament -->
+  <path
+    d="M184 396 L222 344 L240 344 L247 368 L265 368 L272 344 L290 344 L328 396 L300 410 L212 410 Z"
+    fill="#1c1815"
+    stroke="url(#brass)"
+    stroke-width="7"
+    stroke-linejoin="round"
+  />
+  <rect x="241" y="378" width="30" height="10" rx="5" fill="#ffd996" />
+</svg>
