@@ -4,6 +4,7 @@ import {
   FileText,
   Maximize2,
   Minimize2,
+  Quote,
   SlidersHorizontal,
   Volume2,
   VolumeX,
@@ -12,17 +13,27 @@ import { ambientAudio } from './audio/ambientAudio';
 import { typewriterAudio } from './audio/typewriterAudio';
 import { OverRealismCanvas } from './components/OverRealismCanvas';
 import { OfflineIndicator, PWAInstallButton } from './components/PWAInstallButton';
+import { QuoteCardModal } from './components/QuoteCardModal';
 import { SettingsDrawer } from './components/SettingsDrawer';
 import { SheetsPopover } from './components/SheetsPopover';
+import { TabRuler } from './components/TabRuler';
 import { TypeguideOverlay } from './components/TypeguideOverlay';
 import {
   DEFAULT_SETTINGS,
+  DEFAULT_TAB_STOPS,
+  EMPTY_AMBIENT_MIXER,
   FONT_PRESETS,
   INITIAL_WELCOME_TEXT,
   LINE_SPACING_VALUES,
+  PAGE_CONTENT_HEIGHT_PX,
   PAPER_PRESETS,
+  legacyTrackToMixer,
   temperatureToLightColors,
 } from './constants/presets';
+import {
+  generatePhysicalStrikeMetrics,
+  getDeterministicStrikeMetrics,
+} from './utils/imperfection';
 import {
   exportStyledPaperPng,
   realismStrokesToPlainText,
@@ -33,6 +44,7 @@ import type {
   EditorSettings,
   RealismCursor,
   RealismStroke,
+  TypingModeId,
 } from './types';
 
 const STORAGE_SETTINGS_KEY = 'aksara_settings_v1';
@@ -44,6 +56,23 @@ function loadSavedSettings(): EditorSettings {
     const raw = localStorage.getItem(STORAGE_SETTINGS_KEY);
     if (!raw) return DEFAULT_SETTINGS;
     const parsed = JSON.parse(raw);
+    const isNewMarginUnit = parsed.marginUnitVersion === 2;
+    const migratedLeft =
+      typeof parsed.marginLeft === 'number'
+        ? isNewMarginUnit
+          ? Math.max(0, Math.min(40, Math.round(parsed.marginLeft)))
+          : Math.max(0, Math.min(35, Math.round((parsed.marginLeft / 60) * 100)))
+        : DEFAULT_SETTINGS.marginLeft;
+    const migratedRight =
+      typeof parsed.marginRight === 'number'
+        ? isNewMarginUnit
+          ? Math.max(50, Math.min(100, Math.round(parsed.marginRight)))
+          : parsed.marginRight >= 54
+            ? 100
+            : Math.max(55, Math.min(100, Math.round((parsed.marginRight / 60) * 100)))
+        : DEFAULT_SETTINGS.marginRight;
+    const safeLeft = Math.min(migratedLeft, migratedRight - 25);
+
     return {
       ...DEFAULT_SETTINGS,
       ...parsed,
@@ -60,14 +89,59 @@ function loadSavedSettings(): EditorSettings {
         parsed.typingMode === 'over_realism' || parsed.typingMode === 'standard'
           ? parsed.typingMode
           : DEFAULT_SETTINGS.typingMode,
-      marginLeft:
-        typeof parsed.marginLeft === 'number' ? parsed.marginLeft : DEFAULT_SETTINGS.marginLeft,
-      marginRight:
-        typeof parsed.marginRight === 'number' ? parsed.marginRight : DEFAULT_SETTINGS.marginRight,
+      marginLeft: Math.max(0, safeLeft),
+      marginRight: Math.max(50, migratedRight),
+      marginUnitVersion: 2,
+      tabStops: Array.isArray(parsed.tabStops)
+        ? Array.from(
+            new Set<number>(
+              parsed.tabStops
+                .filter((n: unknown): n is number => typeof n === 'number' && !Number.isNaN(n))
+                .map((n: number) => Math.max(2, Math.min(98, Math.round(n))))
+            )
+          ).sort((a, b) => a - b)
+        : [...DEFAULT_TAB_STOPS],
+      showTabRuler:
+        typeof parsed.showTabRuler === 'boolean'
+          ? parsed.showTabRuler
+          : DEFAULT_SETTINGS.showTabRuler,
+      letterSpacing:
+        typeof parsed.letterSpacing === 'number'
+          ? Math.max(-1, Math.min(4, Number(parsed.letterSpacing.toFixed(1))))
+          : DEFAULT_SETTINGS.letterSpacing,
       ribbonColor:
-        parsed.ribbonColor === 'red' || parsed.ribbonColor === 'black'
+        parsed.ribbonColor === 'red' ||
+        parsed.ribbonColor === 'blue' ||
+        parsed.ribbonColor === 'black' ||
+        parsed.ribbonColor === 'correction'
           ? parsed.ribbonColor
           : DEFAULT_SETTINGS.ribbonColor,
+      ribbonDepletionEnabled:
+        typeof parsed.ribbonDepletionEnabled === 'boolean'
+          ? parsed.ribbonDepletionEnabled
+          : DEFAULT_SETTINGS.ribbonDepletionEnabled,
+      imperfectionPreset:
+        parsed.imperfectionPreset === 'precision' ||
+        parsed.imperfectionPreset === 'classic_tilt' ||
+        parsed.imperfectionPreset === 'vintage_worn'
+          ? parsed.imperfectionPreset
+          : DEFAULT_SETTINGS.imperfectionPreset,
+      imperfectionIntensity:
+        typeof parsed.imperfectionIntensity === 'number'
+          ? parsed.imperfectionIntensity
+          : DEFAULT_SETTINGS.imperfectionIntensity,
+      imperfectionInStandard:
+        typeof parsed.imperfectionInStandard === 'boolean'
+          ? parsed.imperfectionInStandard
+          : DEFAULT_SETTINGS.imperfectionInStandard,
+      paginationEnabled:
+        typeof parsed.paginationEnabled === 'boolean'
+          ? parsed.paginationEnabled
+          : DEFAULT_SETTINGS.paginationEnabled,
+      ambientMixer:
+        parsed.ambientMixer && typeof parsed.ambientMixer === 'object'
+          ? { ...EMPTY_AMBIENT_MIXER, ...parsed.ambientMixer }
+          : legacyTrackToMixer(parsed.ambientTrack),
       typebarAnimation:
         typeof parsed.typebarAnimation === 'boolean'
           ? parsed.typebarAnimation
@@ -77,6 +151,14 @@ function loadSavedSettings(): EditorSettings {
           ? parsed.typebarJamEnabled
           : DEFAULT_SETTINGS.typebarJamEnabled,
       stampStyle: parsed.stampStyle ?? DEFAULT_SETTINGS.stampStyle,
+      stampCustomText:
+        typeof parsed.stampCustomText === 'string'
+          ? parsed.stampCustomText.slice(0, 28)
+          : DEFAULT_SETTINGS.stampCustomText,
+      stampShowDate:
+        typeof parsed.stampShowDate === 'boolean'
+          ? parsed.stampShowDate
+          : DEFAULT_SETTINGS.stampShowDate,
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -114,6 +196,13 @@ function loadSavedSheets(): DocumentSheet[] {
             typeof s.realismCursor.y === 'number'
               ? s.realismCursor
               : undefined,
+          ribbonInk: typeof s.ribbonInk === 'number' ? s.ribbonInk : 100,
+          lastEditedMode:
+            s.lastEditedMode === 'over_realism' || s.lastEditedMode === 'standard'
+              ? s.lastEditedMode
+              : undefined,
+          syncedStandardSnapshot:
+            typeof s.syncedStandardSnapshot === 'string' ? s.syncedStandardSnapshot : undefined,
           updatedAt: typeof s.updatedAt === 'number' ? s.updatedAt : Date.now(),
         }));
       }
@@ -126,6 +215,7 @@ function loadSavedSheets(): DocumentSheet[] {
       id: 'sheet-initial',
       title: 'Catatan Malam',
       content: INITIAL_WELCOME_TEXT,
+      ribbonInk: 100,
       updatedAt: Date.now(),
     },
   ];
@@ -146,6 +236,8 @@ export default function App() {
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isSheetsOpen, setIsSheetsOpen] = useState(false);
+  const [isQuoteModalOpen, setIsQuoteModalOpen] = useState(false);
+  const [quoteModalInitialText, setQuoteModalInitialText] = useState('');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [isExportingPng, setIsExportingPng] = useState(false);
@@ -187,6 +279,7 @@ export default function App() {
   const carriageTimerRef = useRef<number | null>(null);
   const lockAlertTimerRef = useRef<number | null>(null);
   const marginBellRungLineRef = useRef<number>(-1);
+  const lastPageIndexRef = useRef<number>(0);
   const previousSoundProfileRef = useRef(settings.soundProfile);
   const lastStrikeTimeRef = useRef<number>(0);
   const lastStrikeKeyRef = useRef<string>('');
@@ -197,11 +290,12 @@ export default function App() {
   const lastFrameTimeRef = useRef<number>(0);
   const slideSoundAccumRef = useRef<number>(0);
   const settingsRef = useRef(settings);
-  const charWidthRef = useRef(charWidth);
   const marginReleasedRef = useRef(marginReleased);
+  const leftMarginPxRef = useRef(0);
+  const rightMarginPxRef = useRef(644);
+  const maxPhysicalPxRef = useRef(700);
 
   settingsRef.current = settings;
-  charWidthRef.current = charWidth;
   marginReleasedRef.current = marginReleased;
 
   const isOverRealism = settings.typingMode === 'over_realism';
@@ -211,19 +305,36 @@ export default function App() {
   }, [sheets, activeSheetId]);
 
   const content = activeSheet?.content ?? '';
+  const activeRibbonInk = activeSheet?.ribbonInk ?? 100;
   const realismStrokes: RealismStroke[] = activeSheet?.realismStrokes ?? [];
-  const realismCursor: RealismCursor = activeSheet?.realismCursor ?? {
-    x: settings.marginLeft * charWidth,
-    y: 0,
-  };
 
   // Derived visual geometry
-  const paperPreset = PAPER_PRESETS[settings.paperTexture];
+  const paperPreset = PAPER_PRESETS[settings.paperTexture] ?? PAPER_PRESETS.ivory;
   const fontPreset = FONT_PRESETS[settings.fontId];
   const lightPreset = temperatureToLightColors(settings.lightTemperature);
   const lineHeightRatio = LINE_SPACING_VALUES[settings.lineSpacing];
   const lineHeightPx = Math.round(settings.fontSize * lineHeightRatio);
+  const effectiveLetterSpacingCss =
+    Math.abs(settings.letterSpacing ?? 0) < 0.05
+      ? fontPreset.isMono
+        ? '0.01em'
+        : '0.005em'
+      : `${settings.letterSpacing.toFixed(1)}px`;
   const isUnlimitedPaper = settings.paperLayout === 'unlimited';
+  const paperPatternClass =
+    paperPreset.pattern === 'charcoal'
+      ? 'paper-charcoal-texture'
+      : paperPreset.pattern === 'bond'
+        ? 'paper-modern-bond'
+        : paperPreset.pattern === 'dots'
+          ? 'paper-modern-dots'
+          : paperPreset.pattern === 'grid'
+            ? 'paper-modern-grid'
+            : paperPreset.pattern === 'slate'
+              ? 'paper-modern-slate'
+              : '';
+  const hasRepeatingGridPattern =
+    paperPreset.pattern === 'dots' || paperPreset.pattern === 'grid';
 
   const isCompactViewport = viewport.width < 820;
   const paperWidth = isCompactViewport
@@ -235,14 +346,22 @@ export default function App() {
   const padTop = isCompactViewport ? 72 : 108;
   const padBottom = Math.max(360, Math.round(viewport.height * 0.52));
 
-  // Shared Left & Right Margin physical pixel offsets (applies to BOTH Standard & Over-Realism!)
-  const leftMarginPx = settings.marginLeft * charWidth;
-  const rightMarginPx = settings.marginRight * charWidth;
+  // Fixed physical paper margins (% of printable paper width) — stays rock-solid regardless of fontSize or letterSpacing!
+  const printableWidth = Math.max(200, paperWidth - padX * 2);
+  const leftMarginPx = (settings.marginLeft / 100) * printableWidth;
+  const rightMarginPx = (settings.marginRight / 100) * printableWidth;
+  const maxPhysicalPx = printableWidth + Math.round(padX * 0.55);
   const standardPadLeft = Math.round(padX + leftMarginPx);
-  const standardPadRight = Math.max(
-    padX,
-    Math.round(paperWidth - (padX + rightMarginPx))
-  );
+  const standardPadRight = Math.max(padX, Math.round(padX + (printableWidth - rightMarginPx)));
+
+  leftMarginPxRef.current = leftMarginPx;
+  rightMarginPxRef.current = rightMarginPx;
+  maxPhysicalPxRef.current = maxPhysicalPx;
+
+  const realismCursor: RealismCursor = activeSheet?.realismCursor ?? {
+    x: leftMarginPx,
+    y: 0,
+  };
 
   // Persist settings & sheets in localStorage
   useEffect(() => {
@@ -264,16 +383,19 @@ export default function App() {
     }
   }, [sheets, activeSheet]);
 
-  // Imprint existing Standard text into free-flow Over-Realism strokes on first entry
+  // Imprint existing Standard text into free-flow Over-Realism strokes on initial entry if needed
   useEffect(() => {
     if (!isOverRealism || !activeSheet) return;
     if (activeSheet.realismStrokes === undefined) {
       const converted = textToRealismStrokes(
         activeSheet.content,
-        settings.marginLeft,
-        settings.marginRight,
+        leftMarginPx,
+        rightMarginPx,
         charWidth,
-        lineHeightPx
+        lineHeightPx,
+        settings.imperfectionIntensity,
+        settings.imperfectionPreset,
+        settings.ribbonColor
       );
       setSheets((prev) =>
         prev.map((s) =>
@@ -282,25 +404,32 @@ export default function App() {
                 ...s,
                 realismStrokes: converted.strokes,
                 realismCursor: converted.cursor,
+                syncedStandardSnapshot: activeSheet.content,
               }
             : s
         )
       );
     }
-  }, [isOverRealism, activeSheet, settings.marginLeft, settings.marginRight, charWidth, lineHeightPx]);
+  }, [
+    isOverRealism,
+    activeSheet,
+    leftMarginPx,
+    rightMarginPx,
+    settings.imperfectionIntensity,
+    settings.imperfectionPreset,
+    settings.ribbonColor,
+    charWidth,
+    lineHeightPx,
+  ]);
 
-  // Sync ambient background music engine
+  // Sync layered ambient mixer audio engine
   useEffect(() => {
-    ambientAudio.setTrack(settings.ambientTrack, settings.ambientVolume);
-  }, [settings.ambientTrack]);
-
-  useEffect(() => {
-    ambientAudio.setVolume(settings.ambientVolume);
-  }, [settings.ambientVolume]);
+    ambientAudio.setMix(settings.ambientMixer, settings.ambientVolume);
+  }, [settings.ambientMixer, settings.ambientVolume]);
 
   useEffect(() => {
     return () => {
-      ambientAudio.stopCurrent();
+      ambientAudio.stopAll();
       if (arrowRafRef.current) cancelAnimationFrame(arrowRafRef.current);
     };
   }, []);
@@ -392,6 +521,7 @@ export default function App() {
     caretIndex,
     settings.fontId,
     settings.fontSize,
+    settings.letterSpacing,
     settings.lineSpacing,
     settings.marginLeft,
     settings.marginRight,
@@ -408,26 +538,6 @@ export default function App() {
     }
   }, [measureGeometry, settings.fontId]);
 
-  const updateSetting = useCallback(
-    <K extends keyof EditorSettings>(key: K, value: EditorSettings[K]) => {
-      setSettings((prev) => {
-        if (key === 'soundProfile' && value !== 'silent') {
-          previousSoundProfileRef.current = value as EditorSettings['soundProfile'];
-        }
-        return { ...prev, [key]: value };
-      });
-    },
-    []
-  );
-
-  const applySettingsPatch = useCallback((patch: Partial<EditorSettings>) => {
-    setSettings((prev) => ({ ...prev, ...patch }));
-  }, []);
-
-  const handleResetSettings = useCallback(() => {
-    setSettings(DEFAULT_SETTINGS);
-  }, []);
-
   const updateActiveSheet = useCallback(
     (updater: (sheet: DocumentSheet) => DocumentSheet) => {
       setSheets((prev) => {
@@ -438,6 +548,132 @@ export default function App() {
       });
     },
     [activeSheetId]
+  );
+
+  // Seamless two-way synchronization between Standard Mode and Over-Realism Mode
+  const switchTypingMode = useCallback(
+    (nextMode: TypingModeId) => {
+      if (nextMode === settings.typingMode) return;
+
+      if (nextMode === 'standard' && activeSheet && activeSheet.realismStrokes !== undefined) {
+        const syncedText = realismStrokesToPlainText(
+          activeSheet.realismStrokes,
+          charWidth,
+          lineHeightPx
+        );
+        updateActiveSheet((s) => ({
+          ...s,
+          content: syncedText,
+          syncedStandardSnapshot: syncedText,
+          lastEditedMode: 'over_realism',
+        }));
+      } else if (nextMode === 'over_realism' && activeSheet) {
+        const needsReImprint =
+          activeSheet.realismStrokes === undefined ||
+          (activeSheet.lastEditedMode === 'standard' &&
+            activeSheet.content !== activeSheet.syncedStandardSnapshot);
+
+        if (needsReImprint) {
+          const converted = textToRealismStrokes(
+            activeSheet.content,
+            leftMarginPx,
+            rightMarginPx,
+            charWidth,
+            lineHeightPx,
+            settings.imperfectionIntensity,
+            settings.imperfectionPreset,
+            settings.ribbonColor
+          );
+          updateActiveSheet((s) => ({
+            ...s,
+            realismStrokes: converted.strokes,
+            realismCursor: converted.cursor,
+            syncedStandardSnapshot: activeSheet.content,
+          }));
+        }
+      }
+
+      setSettings((prev) => ({
+        ...prev,
+        typingMode: nextMode,
+        ribbonColor:
+          nextMode === 'standard' && prev.ribbonColor === 'correction'
+            ? 'black'
+            : prev.ribbonColor,
+      }));
+    },
+    [
+      settings.typingMode,
+      leftMarginPx,
+      rightMarginPx,
+      settings.imperfectionIntensity,
+      settings.imperfectionPreset,
+      settings.ribbonColor,
+      activeSheet,
+      charWidth,
+      lineHeightPx,
+      updateActiveSheet,
+    ]
+  );
+
+  const updateSetting = useCallback(
+    <K extends keyof EditorSettings>(key: K, value: EditorSettings[K]) => {
+      if (key === 'typingMode') {
+        switchTypingMode(value as TypingModeId);
+        return;
+      }
+      setSettings((prev) => {
+        if (key === 'soundProfile' && value !== 'silent') {
+          previousSoundProfileRef.current = value as EditorSettings['soundProfile'];
+        }
+        return { ...prev, [key]: value };
+      });
+    },
+    [switchTypingMode]
+  );
+
+  const applySettingsPatch = useCallback(
+    (patch: Partial<EditorSettings>) => {
+      if (patch.typingMode && patch.typingMode !== settings.typingMode) {
+        switchTypingMode(patch.typingMode);
+      }
+      setSettings((prev) => ({ ...prev, ...patch }));
+    },
+    [settings.typingMode, switchTypingMode]
+  );
+
+  const handleResetSettings = useCallback(() => {
+    setSettings(DEFAULT_SETTINGS);
+  }, []);
+
+  const handleSwapRibbon = useCallback(() => {
+    updateActiveSheet((s) => ({
+      ...s,
+      ribbonInk: 100,
+      updatedAt: Date.now(),
+    }));
+    typewriterAudio.playRibbonSwap(Math.max(settings.soundVolume, 60));
+    focusActiveEditor();
+  }, [updateActiveSheet, settings.soundVolume, focusActiveEditor]);
+
+  const handleToggleTabStop = useCallback(
+    (percent: number) => {
+      const clamped = Math.max(2, Math.min(98, Math.round(percent)));
+      setSettings((prev) => {
+        const exists = prev.tabStops.includes(clamped);
+        const nextStops = exists
+          ? prev.tabStops.filter((v) => v !== clamped)
+          : [...prev.tabStops, clamped].sort((a, b) => a - b).slice(0, 12);
+        return { ...prev, tabStops: nextStops };
+      });
+      typewriterAudio.playPlatenTurn(
+        settings.soundProfile,
+        settings.soundVolume * 0.6,
+        settings.soundTone
+      );
+      focusActiveEditor();
+    },
+    [settings.soundProfile, settings.soundVolume, settings.soundTone, focusActiveEditor]
   );
 
   const syncCaretFromTextarea = useCallback(() => {
@@ -502,8 +738,7 @@ export default function App() {
       lastFrameTimeRef.current = now;
 
       const s = settingsRef.current;
-      const cw = charWidthRef.current;
-      const maxX = (marginReleasedRef.current ? 84 : s.marginRight) * cw;
+      const maxX = marginReleasedRef.current ? maxPhysicalPxRef.current : rightMarginPxRef.current;
 
       // Raw analog slide speeds (feels manual, slightly organic, never snaps to grid!)
       const horizSpeed = 138; // px per second
@@ -528,7 +763,7 @@ export default function App() {
         }
 
         updateActiveSheet((sheet) => {
-          const cur = sheet.realismCursor ?? { x: s.marginLeft * cw, y: 0 };
+          const cur = sheet.realismCursor ?? { x: leftMarginPxRef.current, y: 0 };
           let nextX = cur.x + dx;
           let nextY = cur.y + dy;
 
@@ -574,8 +809,7 @@ export default function App() {
       return;
     }
 
-    const { soundProfile, soundVolume, soundTone, marginBell, bellVariant, marginLeft, marginRight } =
-      settings;
+    const { soundProfile, soundVolume, soundTone, marginBell, bellVariant } = settings;
 
     if (e.key === 'Enter') {
       typewriterAudio.playCarriageReturn(
@@ -607,11 +841,32 @@ export default function App() {
       const ta = e.currentTarget;
       const start = ta.selectionStart;
       const end = ta.selectionEnd;
-      const next = content.slice(0, start) + '    ' + content.slice(end);
-      updateActiveSheet((s) => ({ ...s, content: next, updatedAt: Date.now() }));
+
+      // Jump to the next configured Tab Stop pin on the paper ruler!
+      const currentRelPx = Math.max(leftMarginPx, caretLocal.x - padX);
+      const currentPct = (currentRelPx / Math.max(1, printableWidth)) * 100;
+      const nextStop = settings.tabStops.find(
+        (stop) => stop > currentPct + 1.0 && stop <= settings.marginRight
+      );
+
+      let spacesCount = 4;
+      if (nextStop !== undefined) {
+        const targetPx = (nextStop / 100) * printableWidth;
+        const deltaPx = Math.max(charWidth, targetPx - currentRelPx);
+        spacesCount = Math.max(1, Math.min(36, Math.round(deltaPx / Math.max(5, charWidth))));
+      }
+
+      const insertion = ' '.repeat(spacesCount);
+      const next = content.slice(0, start) + insertion + content.slice(end);
+      updateActiveSheet((s) => ({
+        ...s,
+        content: next,
+        lastEditedMode: 'standard',
+        updatedAt: Date.now(),
+      }));
       requestAnimationFrame(() => {
-        ta.setSelectionRange(start + 4, start + 4);
-        setCaretIndex(start + 4);
+        ta.setSelectionRange(start + spacesCount, start + spacesCount);
+        setCaretIndex(start + spacesCount);
       });
       typewriterAudio.playSpacebar(soundProfile, soundVolume, soundTone);
       triggerStrikeFeedback(false);
@@ -622,14 +877,17 @@ export default function App() {
       typewriterAudio.playKeyStrike(soundProfile, soundVolume, soundTone, e.key);
       triggerStrikeFeedback(false, e.key);
 
-      // Ring margin warning bell near the user's configured Right Margin!
+      // Ring margin warning bell near the physical Right Margin (adapts automatically to fontSize & letterSpacing!)
       if (marginBell && soundProfile !== 'silent') {
         const ta = e.currentTarget;
         const before = ta.value.slice(0, ta.selectionStart);
         const lines = before.split('\n');
         const currentLineIdx = lines.length - 1;
-        const usableCols = Math.max(14, marginRight - marginLeft);
-        const warnAt = Math.max(8, usableCols - 6);
+        const usableCols = Math.max(
+          10,
+          Math.floor((rightMarginPx - leftMarginPx) / Math.max(5, charWidth))
+        );
+        const warnAt = Math.max(6, usableCols - 6);
         const currentLineLen = lines[currentLineIdx].length + 1;
         if (currentLineLen >= warnAt && marginBellRungLineRef.current !== currentLineIdx) {
           marginBellRungLineRef.current = currentLineIdx;
@@ -647,13 +905,57 @@ export default function App() {
   };
 
   const handleStandardChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    updateActiveSheet((s) => ({ ...s, content: e.target.value, updatedAt: Date.now() }));
+    updateActiveSheet((s) => ({
+      ...s,
+      content: e.target.value,
+      lastEditedMode: 'standard',
+      updatedAt: Date.now(),
+    }));
     setCaretIndex(e.target.selectionStart);
     setHasSelection(e.target.selectionStart !== e.target.selectionEnd);
   };
 
   // --- OVER-REALISM PHYSICAL FREE-FLOW TYPEWRITER HANDLERS ---
   const handleRealismKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    const {
+      soundProfile,
+      soundVolume,
+      soundTone,
+      marginBell,
+      bellVariant,
+      ribbonColor,
+    } = settings;
+
+    // Quick Correction Tape shortcut: Ctrl+Backspace or Shift+Backspace
+    // Steps back 1 character pitch and stamps a chalk-white correction patch in-place!
+    if ((e.ctrlKey || e.metaKey || e.shiftKey) && e.key === 'Backspace') {
+      e.preventDefault();
+      setMarginLockedAlert(false);
+      const targetX = Math.max(0, realismCursor.x - charWidth);
+      const targetY = realismCursor.y;
+      const tapeStroke: RealismStroke = {
+        id: `tape-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        char: ' ',
+        x: targetX,
+        y: targetY,
+        jitterX: (Math.random() - 0.5) * 0.5,
+        jitterY: (Math.random() - 0.5) * 0.6,
+        inkAlpha: 0.98,
+        rotation: (Math.random() - 0.5) * 1.4,
+        color: 'correction',
+      };
+      typewriterAudio.playCorrectionTape(soundProfile, soundVolume, soundTone);
+      updateActiveSheet((s) => ({
+        ...s,
+        realismStrokes: [...(s.realismStrokes ?? []), tapeStroke],
+        realismCursor: { x: targetX, y: targetY },
+        lastEditedMode: 'over_realism',
+        updatedAt: Date.now(),
+      }));
+      triggerStrikeFeedback(false);
+      return;
+    }
+
     if (e.metaKey || e.ctrlKey || e.altKey) {
       if (e.key === 's' || e.key === 'S') {
         e.preventDefault();
@@ -662,20 +964,8 @@ export default function App() {
       return;
     }
 
-    const {
-      soundProfile,
-      soundVolume,
-      soundTone,
-      marginBell,
-      bellVariant,
-      marginLeft,
-      marginRight,
-      ribbonColor,
-    } = settings;
-
-    const minLeftPx = marginLeft * charWidth;
-    const maxRightPx = marginRight * charWidth;
-    const maxPhysicalPx = 84 * charWidth;
+    const minLeftPx = leftMarginPx;
+    const maxRightPx = rightMarginPx;
 
     // Pressing Escape frees jammed typebars!
     if (e.key === 'Escape' && isTypebarJammed) {
@@ -758,6 +1048,7 @@ export default function App() {
             x: minLeftPx + (Math.random() - 0.5) * 0.6,
             y: cur.y + lineHeightPx,
           },
+          lastEditedMode: 'over_realism',
           updatedAt: Date.now(),
         };
       });
@@ -789,23 +1080,33 @@ export default function App() {
       return;
     }
 
-    // Tab: mechanical tabulator jump (~5 character pitches)
+    // Tab: mechanical tabulator jump to next custom Tab Stop pin (or ~5 pitches if none ahead)
     if (e.key === 'Tab') {
       e.preventDefault();
       const capX = marginReleased ? maxPhysicalPx : maxRightPx;
+      const capPct = marginReleased ? 100 : settings.marginRight;
+      const currentPct = (realismCursor.x / Math.max(1, printableWidth)) * 100;
+      const nextStop = settings.tabStops.find(
+        (stop) => stop > currentPct + 1.0 && stop <= capPct
+      );
+      const targetX =
+        nextStop !== undefined
+          ? Math.min(capX, (nextStop / 100) * printableWidth)
+          : Math.min(capX, realismCursor.x + charWidth * 5);
+
       typewriterAudio.playSpacebar(soundProfile, soundVolume, soundTone);
       updateActiveSheet((s) => {
         const cur = s.realismCursor ?? { x: minLeftPx, y: 0 };
         return {
           ...s,
-          realismCursor: { x: Math.min(capX, cur.x + charWidth * 5), y: cur.y },
+          realismCursor: { x: targetX, y: cur.y },
         };
       });
       triggerStrikeFeedback(false);
       return;
     }
 
-    // Spacebar: advances carriage 1 pitch without striking ink
+    // Spacebar: advances carriage 1 pitch (or stamps white correction tape if correction ribbon is active!)
     if (e.key === ' ') {
       e.preventDefault();
       if (!marginReleased && realismCursor.x >= maxRightPx - 1) {
@@ -813,6 +1114,34 @@ export default function App() {
         flashMarginLock();
         return;
       }
+
+      if (ribbonColor === 'correction') {
+        typewriterAudio.playCorrectionTape(soundProfile, soundVolume, soundTone);
+        const strikeX = realismCursor.x;
+        const strikeY = realismCursor.y;
+        const tapeStroke: RealismStroke = {
+          id: `tape-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          char: ' ',
+          x: strikeX,
+          y: strikeY,
+          jitterX: (Math.random() - 0.5) * 0.5,
+          jitterY: (Math.random() - 0.5) * 0.6,
+          inkAlpha: 0.98,
+          rotation: (Math.random() - 0.5) * 1.4,
+          color: 'correction',
+        };
+        const nextX = Math.min(maxPhysicalPx, strikeX + charWidth * 0.96);
+        updateActiveSheet((s) => ({
+          ...s,
+          realismStrokes: [...(s.realismStrokes ?? []), tapeStroke],
+          realismCursor: { x: nextX, y: strikeY },
+          lastEditedMode: 'over_realism',
+          updatedAt: Date.now(),
+        }));
+        triggerStrikeFeedback(false);
+        return;
+      }
+
       typewriterAudio.playSpacebar(soundProfile, soundVolume, soundTone);
       const step = charWidth * (0.98 + Math.random() * 0.04);
       updateActiveSheet((s) => {
@@ -842,6 +1171,34 @@ export default function App() {
         return;
       }
 
+      // If Correction Tape ribbon is selected, any printable key stamps chalk-white correction tape!
+      if (ribbonColor === 'correction') {
+        typewriterAudio.playCorrectionTape(soundProfile, soundVolume, soundTone);
+        triggerStrikeFeedback(false, e.key);
+        const strikeX = realismCursor.x;
+        const strikeY = realismCursor.y;
+        const tapeStroke: RealismStroke = {
+          id: `tape-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          char: ' ',
+          x: strikeX,
+          y: strikeY,
+          jitterX: (Math.random() - 0.5) * 0.5,
+          jitterY: (Math.random() - 0.5) * 0.6,
+          inkAlpha: 0.98,
+          rotation: (Math.random() - 0.5) * 1.4,
+          color: 'correction',
+        };
+        const nextX = Math.min(maxPhysicalPx, strikeX + charWidth * 0.96);
+        updateActiveSheet((s) => ({
+          ...s,
+          realismStrokes: [...(s.realismStrokes ?? []), tapeStroke],
+          realismCursor: { x: nextX, y: strikeY },
+          lastEditedMode: 'over_realism',
+          updatedAt: Date.now(),
+        }));
+        return;
+      }
+
       // Authentic mechanical typebar jam if two different keys are mashed within 36ms!
       const nowMs = performance.now();
       if (
@@ -864,15 +1221,25 @@ export default function App() {
 
       const strikeX = realismCursor.x;
       const strikeY = realismCursor.y;
+      const metrics = generatePhysicalStrikeMetrics(
+        e.key,
+        settings.imperfectionIntensity,
+        settings.imperfectionPreset,
+        activeRibbonInk,
+        settings.ribbonDepletionEnabled
+      );
+
       const newStroke: RealismStroke = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         char: e.key,
         x: strikeX,
         y: strikeY,
-        jitterX: (Math.random() - 0.5) * 0.85,
-        jitterY: (Math.random() - 0.5) * 1.55,
-        inkAlpha: 0.78 + Math.random() * 0.22,
-        rotation: (Math.random() - 0.5) * 1.25,
+        jitterX: metrics.jitterX,
+        jitterY: metrics.jitterY,
+        inkAlpha: metrics.inkAlpha,
+        rotation: metrics.rotation,
+        ghostOffset: metrics.ghostOffset,
+        scaleY: metrics.scaleY,
         color: ribbonColor,
       };
 
@@ -880,12 +1247,20 @@ export default function App() {
       const advance = charWidth * (0.985 + Math.random() * 0.03);
       const nextX = Math.min(maxPhysicalPx, strikeX + advance);
 
-      updateActiveSheet((s) => ({
-        ...s,
-        realismStrokes: [...(s.realismStrokes ?? []), newStroke],
-        realismCursor: { x: nextX, y: strikeY },
-        updatedAt: Date.now(),
-      }));
+      updateActiveSheet((s) => {
+        const curInk = typeof s.ribbonInk === 'number' ? s.ribbonInk : 100;
+        const nextInk = settings.ribbonDepletionEnabled
+          ? Math.max(0, Number((curInk - 0.24).toFixed(2)))
+          : curInk;
+        return {
+          ...s,
+          realismStrokes: [...(s.realismStrokes ?? []), newStroke],
+          realismCursor: { x: nextX, y: strikeY },
+          ribbonInk: nextInk,
+          lastEditedMode: 'over_realism',
+          updatedAt: Date.now(),
+        };
+      });
 
       // Ring margin warning bell ~6 character widths before right margin stop
       const approxLineBand = Math.round(strikeY / Math.max(12, lineHeightPx));
@@ -936,13 +1311,14 @@ export default function App() {
     realismInputRef.current?.focus({ preventScroll: true });
   };
 
-  // Gentle wheel scrolling over the stage to read earlier text
+  // Gentle wheel scrolling over the stage to read earlier or later pages
   const handleStageWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (isQuoteModalOpen) return;
     const activeCaretY = isOverRealism ? padTop + realismCursor.y : caretLocal.y;
     setManualScrollY((prev) => {
       const next = prev - e.deltaY * 0.85;
       const maxDown = Math.max(0, activeCaretY - 40);
-      const maxUp = -Math.max(240, mirrorHeight - activeCaretY);
+      const maxUp = -Math.max(240, stageHeight - activeCaretY);
       return Math.max(maxUp, Math.min(maxDown, next));
     });
   };
@@ -954,7 +1330,10 @@ export default function App() {
       title: `Naskah ${sheets.length + 1}`,
       content: '',
       realismStrokes: [],
-      realismCursor: { x: settings.marginLeft * charWidth, y: 0 },
+      realismCursor: { x: leftMarginPx, y: 0 },
+      ribbonInk: 100,
+      lastEditedMode: settings.typingMode,
+      syncedStandardSnapshot: '',
       updatedAt: Date.now(),
     };
     setSheets((prev) => [newSheet, ...prev]);
@@ -963,6 +1342,7 @@ export default function App() {
     setMarginReleased(false);
     setMarginLockedAlert(false);
     setIsSheetsOpen(false);
+    lastPageIndexRef.current = 0;
     typewriterAudio.playCarriageReturn(
       settings.soundProfile,
       settings.soundVolume,
@@ -1017,6 +1397,32 @@ export default function App() {
       setIsExportingPng(false);
     }
   };
+
+  const handleOpenQuoteModal = useCallback(() => {
+    let candidate = '';
+    if (!isOverRealism && textareaRef.current) {
+      const ta = textareaRef.current;
+      if (ta.selectionStart !== ta.selectionEnd) {
+        candidate = ta.value.slice(ta.selectionStart, ta.selectionEnd).trim();
+      }
+    }
+    if (!candidate) {
+      const full = getActivePlainText().trim();
+      if (full.length > 320) {
+        const paragraphs = full.split(/\n\s*\n/).filter(Boolean);
+        candidate =
+          paragraphs[0] && paragraphs[0].length <= 320
+            ? paragraphs[0]
+            : `${full.slice(0, 290).trim()}...`;
+      } else {
+        candidate = full;
+      }
+    }
+    setQuoteModalInitialText(candidate);
+    setIsSheetsOpen(false);
+    setIsSettingsOpen(false);
+    setIsQuoteModalOpen(true);
+  }, [isOverRealism, getActivePlainText]);
 
   const handleCopyText = async () => {
     try {
@@ -1102,6 +1508,17 @@ export default function App() {
   const inkColor =
     settings.inkWear === 'faded' ? paperPreset.inkFadedColor : paperPreset.inkColor;
 
+  const standardInkColor =
+    settings.ribbonColor === 'red'
+      ? paperPreset.isDark
+        ? '#e06d5e'
+        : '#9c261d'
+      : settings.ribbonColor === 'blue'
+        ? paperPreset.isDark
+          ? '#79aee8'
+          : '#1e4478'
+        : inkColor;
+
   const inkOpacity =
     settings.inkWear === 'fresh' ? 0.96 : settings.inkWear === 'classic' ? 0.89 : 0.74;
 
@@ -1143,10 +1560,104 @@ export default function App() {
   const analogColDisplay = (realismCursor.x / Math.max(1, charWidth)).toFixed(1);
   const analogRowDisplay = (realismCursor.y / Math.max(1, lineHeightPx) + 1).toFixed(1);
 
+  // Paginated vertical sheets geometry & page-feed sound trigger
+  const realismMaxStrokeY = useMemo(() => {
+    let maxY = realismCursor.y;
+    for (let i = 0; i < realismStrokes.length; i++) {
+      if (realismStrokes[i].y > maxY) maxY = realismStrokes[i].y;
+    }
+    return maxY;
+  }, [realismStrokes, realismCursor.y]);
+
+  const baseStageHeight = isOverRealism
+    ? Math.max(
+        Math.round(viewport.height * 1.15),
+        Math.ceil(padTop + realismMaxStrokeY + lineHeightPx * 4 + padBottom)
+      )
+    : mirrorHeight;
+
+  const totalPages = settings.paginationEnabled
+    ? Math.max(1, Math.ceil(baseStageHeight / PAGE_CONTENT_HEIGHT_PX))
+    : 1;
+  const stageHeight = settings.paginationEnabled
+    ? totalPages * PAGE_CONTENT_HEIGHT_PX
+    : baseStageHeight;
+
+  useEffect(() => {
+    const currentPageIdx = Math.floor(Math.max(0, activeCaretLocal.y) / PAGE_CONTENT_HEIGHT_PX);
+    if (settings.paginationEnabled && currentPageIdx > lastPageIndexRef.current) {
+      typewriterAudio.playPaperFeed(
+        settings.soundProfile,
+        settings.soundVolume,
+        settings.soundTone
+      );
+    }
+    lastPageIndexRef.current = currentPageIdx;
+  }, [
+    activeCaretLocal.y,
+    settings.paginationEnabled,
+    settings.soundProfile,
+    settings.soundVolume,
+    settings.soundTone,
+  ]);
+
+  // Standard Mode deterministic slanted & worn mechanical letter overlay
+  const showStandardImperfection =
+    !isOverRealism && settings.imperfectionInStandard && settings.imperfectionIntensity > 0;
+
+  const standardSlantedNodes = useMemo(() => {
+    if (!showStandardImperfection) return null;
+    const ghostColor = paperPreset.isDark
+      ? 'rgba(235, 224, 200, 0.28)'
+      : 'rgba(28, 22, 16, 0.28)';
+    const nodes: React.ReactNode[] = [];
+    for (let i = 0; i < content.length; i++) {
+      const ch = content[i];
+      if (ch === '\n' || ch === ' ' || ch === '\t') {
+        nodes.push(ch);
+        continue;
+      }
+      const m = getDeterministicStrikeMetrics(
+        i,
+        ch,
+        settings.imperfectionIntensity,
+        settings.imperfectionPreset
+      );
+      const shadowParts: string[] = [];
+      if (inkTextShadow !== 'none') shadowParts.push(inkTextShadow);
+      if (m.ghostOffset !== 0) {
+        shadowParts.push(
+          `${m.ghostOffset}px ${(m.ghostOffset * 0.45).toFixed(2)}px 0 ${ghostColor}`
+        );
+      }
+      nodes.push(
+        <span
+          key={i}
+          className="inline-block"
+          style={{
+            transform: `translate(${m.jitterX.toFixed(2)}px, ${m.jitterY.toFixed(2)}px) rotate(${m.rotation.toFixed(2)}deg) scaleY(${m.scaleY.toFixed(3)})`,
+            opacity: Number(m.inkAlpha.toFixed(3)),
+            textShadow: shadowParts.length > 0 ? shadowParts.join(', ') : undefined,
+          }}
+        >
+          {ch}
+        </span>
+      );
+    }
+    return nodes;
+  }, [
+    showStandardImperfection,
+    content,
+    settings.imperfectionIntensity,
+    settings.imperfectionPreset,
+    inkTextShadow,
+    paperPreset.isDark,
+  ]);
+
   return (
     <div
       className={`relative h-full w-full overflow-hidden select-none ${
-        isUnlimitedPaper && paperPreset.isDark ? 'paper-charcoal-texture' : ''
+        isUnlimitedPaper && !hasRepeatingGridPattern ? paperPatternClass : ''
       }`}
       style={{
         backgroundColor: isUnlimitedPaper ? paperPreset.baseBg : paperPreset.deskBg,
@@ -1165,7 +1676,7 @@ export default function App() {
         className={`pointer-events-none invisible fixed -top-96 left-0 whitespace-pre ${fontPreset.className}`}
         style={{
           fontSize: `${settings.fontSize}px`,
-          letterSpacing: fontPreset.isMono ? '0.01em' : '0.005em',
+          letterSpacing: effectiveLetterSpacingCss,
         }}
       >
         MMMMMMMMMM
@@ -1194,6 +1705,16 @@ export default function App() {
       {/* Full-Viewport Seamless Unlimited Paper Texture & Vintage Atmosphere */}
       {isUnlimitedPaper ? (
         <>
+          {hasRepeatingGridPattern && (
+            <div
+              aria-hidden="true"
+              className={`pointer-events-none fixed inset-0 no-print ${paperPatternClass}`}
+              style={{
+                backgroundPosition: `${paperLeft}px ${paperTop}px`,
+              }}
+            />
+          )}
+
           {paperPreset.imageUrl && (
             <div
               aria-hidden="true"
@@ -1209,16 +1730,23 @@ export default function App() {
             />
           )}
 
-          {/* Moving tactile paper grain synced with carriage/paper movement */}
-          <div
-            aria-hidden="true"
-            className="pointer-events-none fixed inset-0 paper-grain-overlay no-print"
-            style={{
-              backgroundPosition: `${paperLeft}px ${paperTop}px`,
-              opacity: Number((0.12 + vintage * 0.24).toFixed(3)),
-              mixBlendMode: paperPreset.isDark ? 'soft-light' : 'multiply',
-            }}
-          />
+          {/* Moving tactile paper grain synced with carriage/paper movement (suppressed on modern papers at 0% vintage) */}
+          {(paperPreset.category === 'classic' || vintage > 0.01) && (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none fixed inset-0 paper-grain-overlay no-print"
+              style={{
+                backgroundPosition: `${paperLeft}px ${paperTop}px`,
+                opacity: Number(
+                  (
+                    (paperPreset.category === 'modern' ? 0 : 0.12) +
+                    vintage * 0.24
+                  ).toFixed(3)
+                ),
+                mixBlendMode: paperPreset.isDark ? 'soft-light' : 'multiply',
+              }}
+            />
+          )}
 
           {/* Full-screen Vintage Sepia Warmth & Soft Edge Vignette */}
           {vintage > 0.01 && (
@@ -1358,6 +1886,17 @@ export default function App() {
 
           <button
             type="button"
+            onClick={handleOpenQuoteModal}
+            aria-label="Buat kartu kutipan"
+            title="Buat Kartu Kutipan (1:1, 4:5, 9:16)"
+            className="inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-xs font-medium bg-[#1e1a16]/90 text-[#f0dec2] border border-[#f5e6cf]/14 hover:bg-[#2a241d] transition-colors whitespace-nowrap shrink-0"
+          >
+            <Quote className="h-3.5 w-3.5 text-[#e6b873]" />
+            <span className="hidden md:inline">Kutipan</span>
+          </button>
+
+          <button
+            type="button"
             onClick={handleExportPaperPng}
             disabled={isExportingPng}
             aria-label="Simpan tulisan sebagai foto"
@@ -1426,13 +1965,13 @@ export default function App() {
           showTopChrome ? 'opacity-100' : 'opacity-12 hover:opacity-100'
         }`}
       >
-        {/* Left Margin Control (Active in both Standard & Over-Realism) */}
+        {/* Left Margin Control (Paper-fixed %, independent of font size) */}
         <div className="flex items-center gap-1.5 whitespace-nowrap">
           <span className="text-[#968c7f]">Margin Kiri</span>
           <button
             type="button"
             onClick={() => {
-              updateSetting('marginLeft', Math.max(0, settings.marginLeft - 2));
+              updateSetting('marginLeft', Math.max(0, settings.marginLeft - 5));
               focusActiveEditor();
             }}
             className="h-5 w-5 rounded bg-white/8 hover:bg-white/15 text-[#f2e8da] inline-flex items-center justify-center"
@@ -1440,13 +1979,13 @@ export default function App() {
           >
             −
           </button>
-          <span className="font-mono tabular-nums w-5 text-center">{settings.marginLeft}</span>
+          <span className="font-mono tabular-nums w-8 text-center">{settings.marginLeft}%</span>
           <button
             type="button"
             onClick={() => {
               updateSetting(
                 'marginLeft',
-                Math.min(settings.marginRight - 16, settings.marginLeft + 2)
+                Math.min(40, Math.min(settings.marginRight - 25, settings.marginLeft + 5))
               );
               focusActiveEditor();
             }}
@@ -1461,7 +2000,7 @@ export default function App() {
           |
         </span>
 
-        {/* Right Margin Control (Active in both Standard & Over-Realism) */}
+        {/* Right Margin Control (Paper-fixed %, independent of font size) */}
         <div className="flex items-center gap-1.5 whitespace-nowrap">
           <span className="text-[#968c7f]">Margin Kanan</span>
           <button
@@ -1469,7 +2008,7 @@ export default function App() {
             onClick={() => {
               updateSetting(
                 'marginRight',
-                Math.max(settings.marginLeft + 16, settings.marginRight - 2)
+                Math.max(50, Math.max(settings.marginLeft + 25, settings.marginRight - 5))
               );
               focusActiveEditor();
             }}
@@ -1478,11 +2017,11 @@ export default function App() {
           >
             −
           </button>
-          <span className="font-mono tabular-nums w-5 text-center">{settings.marginRight}</span>
+          <span className="font-mono tabular-nums w-9 text-center">{settings.marginRight}%</span>
           <button
             type="button"
             onClick={() => {
-              updateSetting('marginRight', Math.min(74, settings.marginRight + 2));
+              updateSetting('marginRight', Math.min(100, settings.marginRight + 5));
               focusActiveEditor();
             }}
             className="h-5 w-5 rounded bg-white/8 hover:bg-white/15 text-[#f2e8da] inline-flex items-center justify-center"
@@ -1492,43 +2031,103 @@ export default function App() {
           </button>
         </div>
 
+        <span className="text-[#564e45]" aria-hidden="true">
+          |
+        </span>
+
+        {/* Ink Ribbon Selector (Black, Blue, Red across all modes + White Correction Tape in Over-Realism) */}
+        <div className="flex items-center gap-1 whitespace-nowrap">
+          <button
+            type="button"
+            onClick={() => {
+              updateSetting('ribbonColor', 'black');
+              focusActiveEditor();
+            }}
+            className={`px-2 py-0.5 rounded transition-colors ${
+              settings.ribbonColor === 'black'
+                ? 'bg-[#2e2822] text-[#f4efe7] font-medium'
+                : 'text-[#8e8478] hover:text-[#e5ddd2]'
+            }`}
+          >
+            Hitam
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              updateSetting('ribbonColor', 'blue');
+              focusActiveEditor();
+            }}
+            className={`px-2 py-0.5 rounded transition-colors ${
+              settings.ribbonColor === 'blue'
+                ? 'bg-[#192e4a] text-[#8dc2f8] font-medium'
+                : 'text-[#8e8478] hover:text-[#8dc2f8]'
+            }`}
+          >
+            Biru
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              updateSetting('ribbonColor', 'red');
+              focusActiveEditor();
+            }}
+            className={`px-2 py-0.5 rounded transition-colors ${
+              settings.ribbonColor === 'red'
+                ? 'bg-[#421f1c] text-[#f29587] font-medium'
+                : 'text-[#8e8478] hover:text-[#f29587]'
+            }`}
+          >
+            Merah
+          </button>
+          {isOverRealism && (
+            <button
+              type="button"
+              onClick={() => {
+                updateSetting('ribbonColor', 'correction');
+                focusActiveEditor();
+              }}
+              title="Pita koreksi putih (atau tekan Ctrl/Shift + Backspace untuk tutup huruf sebelumnya)"
+              className={`px-2 py-0.5 rounded transition-colors ${
+                settings.ribbonColor === 'correction'
+                  ? 'bg-[#ede9e0] text-[#1c1814] font-semibold'
+                  : 'text-[#8e8478] hover:text-[#f4efe7]'
+              }`}
+            >
+              Koreksi
+            </button>
+          )}
+        </div>
+
         {isOverRealism && (
           <>
-            <span className="text-[#564e45]" aria-hidden="true">
-              |
-            </span>
-
-            {/* Bichrome Ribbon Lever */}
-            <div className="flex items-center gap-1 whitespace-nowrap">
-              <button
-                type="button"
-                onClick={() => {
-                  updateSetting('ribbonColor', 'black');
-                  focusActiveEditor();
-                }}
-                className={`px-2 py-0.5 rounded transition-colors ${
-                  settings.ribbonColor === 'black'
-                    ? 'bg-[#2e2822] text-[#f4efe7] font-medium'
-                    : 'text-[#8e8478] hover:text-[#e5ddd2]'
-                }`}
-              >
-                Pita Hitam
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  updateSetting('ribbonColor', 'red');
-                  focusActiveEditor();
-                }}
-                className={`px-2 py-0.5 rounded transition-colors ${
-                  settings.ribbonColor === 'red'
-                    ? 'bg-[#421f1c] text-[#f29587] font-medium'
-                    : 'text-[#8e8478] hover:text-[#f29587]'
-                }`}
-              >
-                Pita Merah
-              </button>
-            </div>
+            {settings.ribbonDepletionEnabled && (
+              <>
+                <span className="text-[#564e45]" aria-hidden="true">
+                  |
+                </span>
+                <div className="flex items-center gap-1.5 whitespace-nowrap">
+                  <span
+                    className={`font-mono tabular-nums ${
+                      activeRibbonInk < 25 ? 'text-[#f29587] font-semibold' : 'text-[#b5aba0]'
+                    }`}
+                  >
+                    Pita {Math.round(activeRibbonInk)}%
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleSwapRibbon}
+                    title="Pasang gulungan pita tinta baru (100%)"
+                    className={`px-2 py-0.5 rounded transition-colors font-medium ${
+                      activeRibbonInk < 25
+                        ? 'bg-[#e6b873] text-[#17130f] hover:bg-[#f0c784]'
+                        : 'bg-white/7 text-[#d4cabd] hover:bg-white/14'
+                    }`}
+                  >
+                    Ganti Pita
+                  </button>
+                </div>
+              </>
+            )}
 
             <span className="text-[#564e45]" aria-hidden="true">
               |
@@ -1598,10 +2197,10 @@ export default function App() {
         <div
           className={`absolute left-0 top-0 will-change-transform motion-safe-transition ${
             !isUnlimitedPaper ? 'rounded-[2px]' : ''
-          } ${!isUnlimitedPaper && paperPreset.isDark ? 'paper-charcoal-texture' : ''}`}
+          } ${!isUnlimitedPaper ? paperPatternClass : ''}`}
           style={{
             width: `${paperWidth}px`,
-            minHeight: `${mirrorHeight}px`,
+            minHeight: `${stageHeight}px`,
             transform: `translate3d(${paperLeft}px, ${
               paperTop + (strikePulse && settings.typebarAnimation ? 0.75 : 0)
             }px, 0)`,
@@ -1613,45 +2212,96 @@ export default function App() {
           }}
           onClick={focusActiveEditor}
         >
-          {/* Vintage Rubber Date Stamp on the top-right corner of the paper */}
-          {settings.stampStyle && settings.stampStyle !== 'none' && (
-            <div
-              aria-hidden="true"
-              className="pointer-events-none absolute z-10 select-none"
-              style={{
-                top: '28px',
-                right: `${padX}px`,
-                transform: 'rotate(-4.5deg)',
-                color:
-                  settings.stampStyle !== 'date_ink'
-                    ? paperPreset.isDark
-                      ? 'rgba(230, 108, 92, 0.72)'
-                      : 'rgba(158, 38, 30, 0.68)'
-                    : paperPreset.isDark
-                      ? 'rgba(230, 222, 208, 0.56)'
-                      : 'rgba(42, 36, 30, 0.54)',
-              }}
-            >
-              {settings.stampStyle === 'archive_red' ? (
-                <div className="border-2 border-current p-[2px]">
-                  <div className="border border-current px-3 py-1 text-center leading-tight">
-                    <div className="font-typewriter-courier text-[9px] font-bold tracking-[0.2em]">
-                      ARSIP · AKSARA
-                    </div>
-                    <div className="font-typewriter-special text-xs font-bold tracking-wider mt-0.5">
-                      {stampDateLabel}
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="border-[1.5px] border-current px-3 py-1 text-center">
-                  <div className="font-typewriter-special text-xs font-bold tracking-wider">
-                    {stampDateLabel}
-                  </div>
-                </div>
-              )}
-            </div>
+          {/* Interactive Top-of-Paper Mechanical Tab Ruler */}
+          {settings.showTabRuler && (
+            <TabRuler
+              padX={padX}
+              printableWidth={printableWidth}
+              marginLeft={settings.marginLeft}
+              marginRight={settings.marginRight}
+              tabStops={settings.tabStops}
+              stageHeight={stageHeight}
+              isDarkPaper={paperPreset.isDark}
+              onToggleTabStop={handleToggleTabStop}
+            />
           )}
+
+          {/* Vintage / Custom Rubber Stamp on the top-right corner of the paper */}
+          {settings.stampStyle && settings.stampStyle !== 'none' && (() => {
+            const isRedStamp =
+              settings.stampStyle === 'date_red' || settings.stampStyle === 'archive_red';
+            const isDoubleFrame =
+              settings.stampStyle === 'archive_red' || settings.stampStyle === 'archive_ink';
+            const customLabel = (settings.stampCustomText ?? '').trim().toUpperCase();
+            const showDate = settings.stampShowDate !== false;
+            const topLine = isDoubleFrame
+              ? showDate
+                ? customLabel || 'ARSIP · AKSARA'
+                : ''
+              : customLabel && showDate
+                ? customLabel
+                : '';
+            const mainLine = isDoubleFrame
+              ? showDate
+                ? stampDateLabel
+                : customLabel || 'ARSIP · AKSARA'
+              : customLabel && showDate
+                ? stampDateLabel
+                : customLabel || stampDateLabel;
+
+            return (
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute z-10 select-none"
+                style={{
+                  top: settings.showTabRuler ? '46px' : '28px',
+                  right: `${padX}px`,
+                  transform: 'rotate(-4.5deg)',
+                  color: isRedStamp
+                    ? paperPreset.isDark
+                      ? 'rgba(230, 108, 92, 0.74)'
+                      : 'rgba(158, 38, 30, 0.70)'
+                    : paperPreset.isDark
+                      ? 'rgba(230, 222, 208, 0.58)'
+                      : 'rgba(42, 36, 30, 0.56)',
+                }}
+              >
+                {isDoubleFrame ? (
+                  <div className="border-2 border-current p-[2px]">
+                    <div className="border border-current px-3 py-1 text-center leading-tight">
+                      {topLine && (
+                        <div className="font-typewriter-courier text-[9px] font-bold tracking-[0.2em]">
+                          {topLine}
+                        </div>
+                      )}
+                      <div
+                        className={`font-typewriter-special text-xs font-bold tracking-wider ${
+                          topLine ? 'mt-0.5' : ''
+                        }`}
+                      >
+                        {mainLine}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="border-[1.5px] border-current px-3 py-1 text-center leading-tight">
+                    {topLine && (
+                      <div className="font-typewriter-courier text-[9px] font-bold tracking-[0.18em]">
+                        {topLine}
+                      </div>
+                    )}
+                    <div
+                      className={`font-typewriter-special text-xs font-bold tracking-wider ${
+                        topLine ? 'mt-0.5' : ''
+                      }`}
+                    >
+                      {mainLine}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           {/* Sheet-only Paper Fiber & Vintage Layers */}
           {!isUnlimitedPaper && paperPreset.imageUrl && (
             <div
@@ -1714,21 +2364,77 @@ export default function App() {
                   (lineHeightPx - settings.fontSize * 1.24) / 2
                 ).toFixed(1)}px, 0)`,
                 backgroundColor:
-                  isOverRealism && settings.ribbonColor === 'red'
-                    ? paperPreset.isDark
-                      ? '#f08275'
-                      : '#a8291e'
-                    : settings.lightEnabled
+                  isOverRealism && settings.ribbonColor === 'correction'
+                    ? '#f7f4ec'
+                    : settings.ribbonColor === 'red'
                       ? paperPreset.isDark
-                        ? lightPreset.coreHex
-                        : paperPreset.caretColor
-                      : paperPreset.caretColor,
-                boxShadow: settings.lightEnabled
-                  ? `0 0 8px rgba(${lightPreset.rgb}, 0.65)`
-                  : 'none',
+                        ? '#f08275'
+                        : '#a8291e'
+                      : settings.ribbonColor === 'blue'
+                        ? paperPreset.isDark
+                          ? '#79aee8'
+                          : '#1e4478'
+                        : settings.lightEnabled
+                          ? paperPreset.isDark
+                            ? lightPreset.coreHex
+                            : paperPreset.caretColor
+                          : paperPreset.caretColor,
+                boxShadow:
+                  isOverRealism && settings.ribbonColor === 'correction'
+                    ? '0 0 0 1px rgba(20, 16, 12, 0.45), 0 0 8px rgba(255, 252, 245, 0.75)'
+                    : settings.lightEnabled
+                      ? `0 0 8px rgba(${lightPreset.rgb}, 0.65)`
+                      : 'none',
               }}
             />
           )}
+
+          {/* Paginated Vertical Sheet Separators & Centered Page Numbers */}
+          {settings.paginationEnabled &&
+            Array.from({ length: totalPages }).map((_, idx) => {
+              const pageNum = idx + 1;
+              const pageEndY = pageNum * PAGE_CONTENT_HEIGHT_PX;
+              return (
+                <React.Fragment key={`page-chrome-${pageNum}`}>
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute left-0 right-0 z-20 flex justify-center select-none no-print"
+                    style={{
+                      top: `${pageEndY - 38}px`,
+                      color: paperPreset.isDark
+                        ? 'rgba(232, 226, 214, 0.44)'
+                        : 'rgba(55, 48, 40, 0.44)',
+                    }}
+                  >
+                    <span className="font-typewriter-courier text-[11px] tracking-[0.22em] tabular-nums">
+                      — {pageNum} —
+                    </span>
+                  </div>
+
+                  {pageNum < totalPages && (
+                    <div
+                      aria-hidden="true"
+                      className="pointer-events-none absolute z-20 select-none no-print"
+                      style={{
+                        top: `${pageEndY - 14}px`,
+                        left: isUnlimitedPaper ? '-100vw' : '-2px',
+                        right: isUnlimitedPaper ? '-100vw' : '-2px',
+                        height: '28px',
+                        backgroundColor: paperPreset.deskBg,
+                        borderTop: paperPreset.isDark
+                          ? '1px solid rgba(255, 255, 255, 0.08)'
+                          : '1px solid rgba(0, 0, 0, 0.14)',
+                        borderBottom: paperPreset.isDark
+                          ? '1px solid rgba(255, 255, 255, 0.08)'
+                          : '1px solid rgba(0, 0, 0, 0.14)',
+                        boxShadow:
+                          'inset 0 8px 14px -8px rgba(0, 0, 0, 0.62), inset 0 -8px 14px -8px rgba(0, 0, 0, 0.48)',
+                      }}
+                    />
+                  )}
+                </React.Fragment>
+              );
+            })}
 
           {isOverRealism ? (
             <OverRealismCanvas
@@ -1742,39 +2448,47 @@ export default function App() {
               padTop={padTop}
               padBottom={padBottom}
               minHeight={Math.round(viewport.height * 1.15)}
-              marginLeft={settings.marginLeft}
-              marginRight={settings.marginRight}
+              leftMarginPx={leftMarginPx}
+              rightMarginPx={rightMarginPx}
+              maxPhysicalPx={maxPhysicalPx}
               isDarkPaper={paperPreset.isDark}
+              paperBaseBg={paperPreset.baseBg}
               inkColor={inkColor}
               inkOpacity={inkOpacity}
               inkTextShadow={inkTextShadow}
+              paginationEnabled={settings.paginationEnabled}
+              showMarginBrackets={!settings.showTabRuler}
               onFreePositionClick={handleRealismFreeClick}
             />
           ) : (
             <>
-              {/* Subtle Left & Right Margin Stop markers for Standard Mode */}
-              <div
-                aria-hidden="true"
-                className="pointer-events-none absolute top-4 h-3 border-l-2 border-t-2 no-print"
-                style={{
-                  left: `${standardPadLeft}px`,
-                  width: '8px',
-                  borderColor: paperPreset.isDark
-                    ? 'rgba(230, 184, 115, 0.28)'
-                    : 'rgba(130, 88, 42, 0.30)',
-                }}
-              />
-              <div
-                aria-hidden="true"
-                className="pointer-events-none absolute top-4 h-3 border-r-2 border-t-2 no-print"
-                style={{
-                  left: `${Math.min(paperWidth - padX, padX + rightMarginPx) - 8}px`,
-                  width: '8px',
-                  borderColor: paperPreset.isDark
-                    ? 'rgba(224, 109, 94, 0.32)'
-                    : 'rgba(165, 58, 42, 0.32)',
-                }}
-              />
+              {/* Subtle Left & Right Margin Stop markers for Standard Mode (hidden when TabRuler draws them) */}
+              {!settings.showTabRuler && (
+                <>
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute top-4 h-3 border-l-2 border-t-2 no-print"
+                    style={{
+                      left: `${standardPadLeft}px`,
+                      width: '8px',
+                      borderColor: paperPreset.isDark
+                        ? 'rgba(230, 184, 115, 0.28)'
+                        : 'rgba(130, 88, 42, 0.30)',
+                    }}
+                  />
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute top-4 h-3 border-r-2 border-t-2 no-print"
+                    style={{
+                      left: `${Math.min(paperWidth - padX, padX + rightMarginPx) - 8}px`,
+                      width: '8px',
+                      borderColor: paperPreset.isDark
+                        ? 'rgba(224, 109, 94, 0.32)'
+                        : 'rgba(165, 58, 42, 0.32)',
+                    }}
+                  />
+                </>
+              )}
               <div
                 aria-hidden="true"
                 className="pointer-events-none absolute top-0 bottom-0 no-print"
@@ -1810,7 +2524,7 @@ export default function App() {
                   paddingRight: `${standardPadRight}px`,
                   fontSize: `${settings.fontSize}px`,
                   lineHeight: `${lineHeightPx}px`,
-                  letterSpacing: fontPreset.isMono ? '0.01em' : '0.005em',
+                  letterSpacing: effectiveLetterSpacingCss,
                   wordBreak: 'break-word',
                   overflowWrap: 'break-word',
                 }}
@@ -1826,6 +2540,31 @@ export default function App() {
                 <span>{textAfterCaret}</span>
                 {'\n'}
               </div>
+
+              {/* Deterministic Mechanical Slant Overlay for Standard Mode */}
+              {showStandardImperfection && (
+                <div
+                  aria-hidden="true"
+                  className={`pointer-events-none absolute inset-0 z-[5] whitespace-pre-wrap break-words select-none ${fontPreset.className}`}
+                  style={{
+                    height: `${stageHeight}px`,
+                    paddingTop: `${padTop}px`,
+                    paddingBottom: `${padBottom}px`,
+                    paddingLeft: `${standardPadLeft}px`,
+                    paddingRight: `${standardPadRight}px`,
+                    fontSize: `${settings.fontSize}px`,
+                    lineHeight: `${lineHeightPx}px`,
+                    letterSpacing: effectiveLetterSpacingCss,
+                    color: standardInkColor,
+                    opacity: inkOpacity,
+                    overflow: 'hidden',
+                    wordBreak: 'break-word',
+                    overflowWrap: 'break-word',
+                  }}
+                >
+                  {standardSlantedNodes}
+                </div>
+              )}
 
               {/* Standard Tactile Writing Textarea respecting Left & Right Margins */}
               <textarea
@@ -1846,19 +2585,21 @@ export default function App() {
                 autoCapitalize="off"
                 aria-label="Lembar ketikan Aksara"
                 placeholder="Mulai mengetik di sini..."
-                className={`relative z-10 block w-full resize-none bg-transparent outline-none caret-transparent select-text ${fontPreset.className}`}
+                className={`relative z-10 block w-full resize-none bg-transparent outline-none caret-transparent select-text ${
+                  showStandardImperfection ? 'placeholder:text-[#8c8173]/55' : ''
+                } ${fontPreset.className}`}
                 style={{
-                  height: `${mirrorHeight}px`,
+                  height: `${stageHeight}px`,
                   paddingTop: `${padTop}px`,
                   paddingBottom: `${padBottom}px`,
                   paddingLeft: `${standardPadLeft}px`,
                   paddingRight: `${standardPadRight}px`,
                   fontSize: `${settings.fontSize}px`,
                   lineHeight: `${lineHeightPx}px`,
-                  letterSpacing: fontPreset.isMono ? '0.01em' : '0.005em',
-                  color: inkColor,
-                  opacity: inkOpacity,
-                  textShadow: inkTextShadow,
+                  letterSpacing: effectiveLetterSpacingCss,
+                  color: showStandardImperfection ? 'transparent' : standardInkColor,
+                  opacity: showStandardImperfection ? 1 : inkOpacity,
+                  textShadow: showStandardImperfection ? 'none' : inkTextShadow,
                   overflow: 'hidden',
                   wordBreak: 'break-word',
                   overflowWrap: 'break-word',
@@ -1907,10 +2648,12 @@ export default function App() {
           setMarginReleased(false);
           setMarginLockedAlert(false);
           setIsTypebarJammed(false);
+          lastPageIndexRef.current = 0;
         }}
         onCreateSheet={handleCreateSheet}
         onDeleteSheet={handleDeleteSheet}
         onExportPaperPng={handleExportPaperPng}
+        onOpenQuoteModal={handleOpenQuoteModal}
         isExportingPng={isExportingPng}
         photoSaved={photoSaved}
         onExportTxt={handleExportTxt}
@@ -1927,9 +2670,24 @@ export default function App() {
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         settings={settings}
+        ribbonInk={activeRibbonInk}
+        onSwapRibbon={handleSwapRibbon}
         onUpdate={updateSetting}
         onApplyPatch={applySettingsPatch}
         onReset={handleResetSettings}
+      />
+
+      {/* Studio Kartu Kutipan (1:1, 4:5, 9:16 PNG) */}
+      <QuoteCardModal
+        isOpen={isQuoteModalOpen}
+        onClose={() => {
+          setIsQuoteModalOpen(false);
+          focusActiveEditor();
+        }}
+        initialText={quoteModalInitialText}
+        defaultTitle={activeSheet?.title ?? ''}
+        timestamp={activeSheet?.updatedAt ?? Date.now()}
+        settings={settings}
       />
 
       <OfflineIndicator />

@@ -701,6 +701,118 @@ class TypewriterAudioEngine {
     });
   }
 
+  /** Dry matte chalk-tape stamp click when applying white correction tape */
+  public playCorrectionTape(profile: SoundProfileId, volumePercent: number, tone: number) {
+    if (profile === 'silent' || volumePercent <= 0) return;
+    const ctx = this.ensureContext();
+    if (!ctx || !this.noiseBuffer) return;
+
+    const now = ctx.currentTime;
+    const vol = (volumePercent / 100) * 0.72;
+    const pitchMul = this.toneMultiplier(tone);
+
+    // Quick plastic/ribbon reel click + dry chalk-paper press
+    this.playFilteredNoise(ctx, {
+      start: now,
+      duration: 0.018,
+      filterType: 'bandpass',
+      freq: 3600 * pitchMul,
+      q: 2.4,
+      gain: vol * 0.44,
+      decay: 0.006,
+    });
+
+    this.playFilteredNoise(ctx, {
+      start: now + 0.014,
+      duration: 0.032,
+      filterType: 'bandpass',
+      freq: 1480 * pitchMul,
+      q: 1.5,
+      gain: vol * 0.48,
+      decay: 0.012,
+    });
+  }
+
+  /** Satisfying twin-spool mechanical snap & ratchet when installing a fresh ink ribbon */
+  public playRibbonSwap(volumePercent: number) {
+    if (volumePercent <= 0) return;
+    const ctx = this.ensureContext();
+    if (!ctx || !this.noiseBuffer) return;
+
+    const now = ctx.currentTime;
+    const vol = (volumePercent / 100) * 0.8;
+
+    // 1. Cover latch pop
+    this.playFilteredNoise(ctx, {
+      start: now,
+      duration: 0.028,
+      filterType: 'bandpass',
+      freq: 1650,
+      q: 1.8,
+      gain: vol * 0.52,
+      decay: 0.01,
+    });
+
+    // 2. Spool ratchet winding ticks
+    [0.065, 0.115, 0.165, 0.215].forEach((offset, idx) => {
+      this.playFilteredNoise(ctx, {
+        start: now + offset,
+        duration: 0.016,
+        filterType: 'bandpass',
+        freq: 2900 + idx * 320,
+        q: 2.8,
+        gain: vol * 0.36,
+        decay: 0.006,
+      });
+    });
+
+    // 3. Final crisp brass latch click shut
+    this.playFilteredNoise(ctx, {
+      start: now + 0.285,
+      duration: 0.035,
+      filterType: 'bandpass',
+      freq: 2150,
+      q: 2.0,
+      gain: vol * 0.68,
+      decay: 0.014,
+    });
+  }
+
+  /** Paper sheet rolling swish + platen clicks when advancing to a new page */
+  public playPaperFeed(profile: SoundProfileId, volumePercent: number, tone: number) {
+    if (profile === 'silent' || volumePercent <= 0) return;
+    const ctx = this.ensureContext();
+    if (!ctx || !this.noiseBuffer) return;
+
+    const now = ctx.currentTime;
+    const vol = (volumePercent / 100) * 0.68;
+    const pitchMul = this.toneMultiplier(tone);
+
+    // Crisp paper slide swish
+    this.playFilteredNoise(ctx, {
+      start: now,
+      duration: 0.24,
+      filterType: 'bandpass',
+      freq: 2450 * pitchMul,
+      q: 1.1,
+      gain: vol * 0.34,
+      decay: 0.12,
+    });
+
+    // Three mechanical platen notches
+    [0.02, 0.085, 0.15].forEach((offset) => {
+      this.playFilteredNoise(ctx, {
+        start: now + offset,
+        duration: 0.018,
+        filterType: 'bandpass',
+        freq: 1750 * pitchMul,
+        q: 2.2,
+        gain: vol * 0.32,
+        decay: 0.007,
+      });
+    });
+  }
+
   private playFilteredNoise(
     ctx: AudioContext,
     opts: {

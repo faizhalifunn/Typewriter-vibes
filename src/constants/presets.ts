@@ -1,8 +1,11 @@
 import type {
+  AmbientChannelId,
+  AmbientMixerState,
   AmbientTrackId,
   BellVariantId,
   EditorSettings,
   FontId,
+  ImperfectionPresetId,
   LineSpacingId,
   PaperTextureId,
   SoundProfileId,
@@ -13,11 +16,15 @@ import paperIvoryUrl from '../assets/images/paper_ivory_cotton_1795595597644.jpg
 import paperParchmentUrl from '../assets/images/paper_vintage_parchment_1795595598147.jpg';
 import paperLinenUrl from '../assets/images/paper_fine_linen_1795595600497.jpg';
 
+export type PaperPatternId = 'none' | 'charcoal' | 'bond' | 'dots' | 'grid' | 'slate';
+
 export interface PaperPreset {
   id: PaperTextureId;
+  category: 'modern' | 'classic';
   name: string;
   description: string;
   imageUrl?: string;
+  pattern?: PaperPatternId;
   isDark: boolean;
   baseBg: string;
   deskBg: string;
@@ -31,8 +38,73 @@ export interface PaperPreset {
 }
 
 export const PAPER_PRESETS: Record<PaperTextureId, PaperPreset> = {
+  bond_white: {
+    id: 'bond_white',
+    category: 'modern',
+    name: 'Putih Studio (HVS)',
+    description: 'Putih bersih, halus, dan tajam tanpa efek usang',
+    pattern: 'bond',
+    isDark: false,
+    baseBg: '#fafaf9',
+    deskBg: '#121316',
+    inkColor: '#16181c',
+    inkFadedColor: '#4a4f59',
+    caretColor: '#14161a',
+    selectionBg: 'rgba(59, 130, 246, 0.18)',
+    textureOpacity: 1,
+    swatchStyle: '#fafaf9',
+  },
+  dot_grid: {
+    id: 'dot_grid',
+    category: 'modern',
+    name: 'Jurnal Titik (Dot Grid)',
+    description: 'Kertas modern bertitik presisi ala buku catatan Jepang',
+    pattern: 'dots',
+    isDark: false,
+    baseBg: '#f7f7f5',
+    deskBg: '#121417',
+    inkColor: '#181b20',
+    inkFadedColor: '#4c525c',
+    caretColor: '#181b20',
+    selectionBg: 'rgba(59, 130, 246, 0.18)',
+    textureOpacity: 1,
+    swatchStyle: '#f7f7f5',
+  },
+  minimal_grid: {
+    id: 'minimal_grid',
+    category: 'modern',
+    name: 'Kisi Studio (Grid Halus)',
+    description: 'Garis kotak tipis kontemporer untuk catatan terstruktur',
+    pattern: 'grid',
+    isDark: false,
+    baseBg: '#f4f6f8',
+    deskBg: '#101419',
+    inkColor: '#151b24',
+    inkFadedColor: '#485466',
+    caretColor: '#151b24',
+    selectionBg: 'rgba(59, 130, 246, 0.18)',
+    textureOpacity: 1,
+    swatchStyle: '#f4f6f8',
+  },
+  nord_slate: {
+    id: 'nord_slate',
+    category: 'modern',
+    name: 'Slate Gelap Modern',
+    description: 'Permukaan gelap biru-abu bersih yang nyaman di mata',
+    pattern: 'slate',
+    isDark: true,
+    baseBg: '#13171e',
+    deskBg: '#0a0d12',
+    inkColor: '#e7edf6',
+    inkFadedColor: '#9aa8bd',
+    caretColor: '#8dc4ff',
+    selectionBg: 'rgba(120, 178, 255, 0.24)',
+    textureOpacity: 1,
+    swatchStyle: '#151a22',
+  },
   ivory: {
     id: 'ivory',
+    category: 'classic',
     name: 'Krem Klasik',
     description: 'Kertas katun gading hangat',
     imageUrl: paperIvoryUrl,
@@ -48,6 +120,7 @@ export const PAPER_PRESETS: Record<PaperTextureId, PaperPreset> = {
   },
   parchment: {
     id: 'parchment',
+    category: 'classic',
     name: 'Arsip Tua',
     description: 'Serat perkamen antik kecokelatan',
     imageUrl: paperParchmentUrl,
@@ -63,6 +136,7 @@ export const PAPER_PRESETS: Record<PaperTextureId, PaperPreset> = {
   },
   linen: {
     id: 'linen',
+    category: 'classic',
     name: 'Linen Halus',
     description: 'Kertas surat putih tenun kapas',
     imageUrl: paperLinenUrl,
@@ -78,6 +152,7 @@ export const PAPER_PRESETS: Record<PaperTextureId, PaperPreset> = {
   },
   newsprint: {
     id: 'newsprint',
+    category: 'classic',
     name: 'Koran Antik',
     description: 'Kertas cetak redup bertekstur kasar',
     imageUrl: paperParchmentUrl,
@@ -94,8 +169,10 @@ export const PAPER_PRESETS: Record<PaperTextureId, PaperPreset> = {
   },
   charcoal: {
     id: 'charcoal',
+    category: 'classic',
     name: 'Arang Malam',
     description: 'Kertas gelap matte untuk menulis malam',
+    pattern: 'charcoal',
     isDark: true,
     baseBg: '#1a1816',
     deskBg: '#0c0b0a',
@@ -265,6 +342,105 @@ export const AMBIENT_TRACKS: AmbientTrackPreset[] = [
   { id: 'vinyl', name: 'Vinyl Nostalgia', description: 'Desis piringan hitam analog yang hangat' },
 ];
 
+export interface AmbientChannelMeta {
+  id: AmbientChannelId;
+  name: string;
+  description: string;
+}
+
+export const AMBIENT_CHANNELS: AmbientChannelMeta[] = [
+  { id: 'rain', name: 'Hujan di Jendela', description: 'Rintik hujan lembut mengenai kaca' },
+  { id: 'crowd', name: 'Tempat Ramai / Kafe', description: 'Gumaman obrolan ruang kafe & denting cangkir' },
+  { id: 'lofi_piano', name: 'Piano Malam', description: 'Akor piano lembut yang mengalir pelan' },
+  { id: 'fireplace', name: 'Perapian Hangat', description: 'Gemericik kayu terbakar yang menenangkan' },
+  { id: 'vinyl', name: 'Vinyl Nostalgia', description: 'Desis piringan hitam analog yang hangat' },
+];
+
+export const EMPTY_AMBIENT_MIXER: AmbientMixerState = {
+  rain: 0,
+  lofi_piano: 0,
+  fireplace: 0,
+  vinyl: 0,
+  crowd: 0,
+};
+
+export interface AmbientMixerPreset {
+  id: string;
+  name: string;
+  mixer: AmbientMixerState;
+}
+
+export const AMBIENT_MIXER_PRESETS: AmbientMixerPreset[] = [
+  {
+    id: 'silent',
+    name: 'Hening',
+    mixer: { ...EMPTY_AMBIENT_MIXER },
+  },
+  {
+    id: 'rainy_cafe',
+    name: 'Kafe Hujan',
+    mixer: { rain: 62, crowd: 54, lofi_piano: 35, fireplace: 0, vinyl: 15 },
+  },
+  {
+    id: 'busy_coffee',
+    name: 'Kedai Ramai',
+    mixer: { rain: 0, crowd: 78, lofi_piano: 25, fireplace: 0, vinyl: 22 },
+  },
+  {
+    id: 'cozy_hearth',
+    name: 'Malam Perapian',
+    mixer: { rain: 38, crowd: 0, lofi_piano: 58, fireplace: 68, vinyl: 25 },
+  },
+];
+
+export function legacyTrackToMixer(track?: AmbientTrackId): AmbientMixerState {
+  switch (track) {
+    case 'rain':
+      return { ...EMPTY_AMBIENT_MIXER, rain: 78 };
+    case 'lofi_piano':
+      return { ...EMPTY_AMBIENT_MIXER, lofi_piano: 75, vinyl: 22 };
+    case 'fireplace':
+      return { ...EMPTY_AMBIENT_MIXER, fireplace: 80 };
+    case 'rainy_cafe':
+      return { ...EMPTY_AMBIENT_MIXER, rain: 60, lofi_piano: 65, crowd: 35 };
+    case 'vinyl':
+      return { ...EMPTY_AMBIENT_MIXER, vinyl: 82 };
+    default:
+      return { ...EMPTY_AMBIENT_MIXER };
+  }
+}
+
+export interface ImperfectionPresetMeta {
+  id: ImperfectionPresetId;
+  name: string;
+  description: string;
+  defaultIntensity: number;
+}
+
+export const IMPERFECTION_PRESETS: ImperfectionPresetMeta[] = [
+  {
+    id: 'precision',
+    name: 'Presisi',
+    description: 'Huruf rapi dan lurus seperti mesin terawat baru',
+    defaultIntensity: 14,
+  },
+  {
+    id: 'classic_tilt',
+    name: 'Klasik Miring',
+    description: 'Kemiringan halus, loncatan baseline & tekanan tinta natural',
+    defaultIntensity: 52,
+  },
+  {
+    id: 'vintage_worn',
+    name: 'Antik Berantakan',
+    description: 'Huruf lebih miring, naik-turun tegas & sesekali bayangan ganda',
+    defaultIntensity: 84,
+  },
+];
+
+export const PAGE_CONTENT_HEIGHT_PX = 940;
+export const PAGE_GAP_PX = 34;
+
 export interface FontPreset {
   id: FontId;
   name: string;
@@ -329,11 +505,16 @@ export interface StampStylePreset {
   description: string;
 }
 
+export const DEFAULT_TAB_STOPS = [10, 30, 55, 75];
+
+export const STAMP_CUSTOM_PRESETS = ['ARSIP · AKSARA', 'DRAF I', 'RAHASIA', 'NASKAH ASLI'];
+
 export const STAMP_STYLES: StampStylePreset[] = [
-  { id: 'none', name: 'Tanpa Stempel', description: 'Kertas bersih tanpa cap tanggal' },
-  { id: 'date_red', name: 'Tanggal Merah', description: 'Cap tanggal karet klasik tinta merah' },
-  { id: 'date_ink', name: 'Tanggal Tinta', description: 'Cap tanggal minimalis tinta arang' },
-  { id: 'archive_red', name: 'Cap Arsip', description: 'Stempel arsip antik bertanggal di sudut kertas' },
+  { id: 'none', name: 'Tanpa Stempel', description: 'Kertas bersih tanpa cap' },
+  { id: 'date_red', name: 'Cap Merah', description: 'Bingkai tunggal karet klasik tinta merah' },
+  { id: 'date_ink', name: 'Cap Tinta', description: 'Bingkai tunggal minimalis tinta arang' },
+  { id: 'archive_red', name: 'Arsip Merah', description: 'Cap arsip bingkai ganda tinta merah' },
+  { id: 'archive_ink', name: 'Arsip Tinta', description: 'Cap arsip bingkai ganda tinta arang' },
 ];
 
 export interface MoodPreset {
@@ -364,6 +545,7 @@ export const MOOD_PRESETS: MoodPreset[] = [
       soundProfile: 'classic',
       bellVariant: 'underwood',
       ambientTrack: 'lofi_piano',
+      ambientMixer: { rain: 0, lofi_piano: 72, fireplace: 0, vinyl: 26, crowd: 0 },
     },
   },
   {
@@ -384,12 +566,13 @@ export const MOOD_PRESETS: MoodPreset[] = [
       soundProfile: 'classic',
       bellVariant: 'olivetti',
       ambientTrack: 'rain',
+      ambientMixer: { rain: 74, lofi_piano: 22, fireplace: 0, vinyl: 0, crowd: 0 },
     },
   },
   {
     id: 'newsroom',
     name: 'Redaksi 1962',
-    subtitle: 'Koran antik · Mesin berat · Netral',
+    subtitle: 'Koran antik · Mesin berat · Ramai',
     swatchBg: '#d3cdc0',
     swatchGlow: '#fff0d6',
     patch: {
@@ -404,6 +587,7 @@ export const MOOD_PRESETS: MoodPreset[] = [
       soundProfile: 'heavy',
       bellVariant: 'royal',
       ambientTrack: 'vinyl',
+      ambientMixer: { rain: 0, lofi_piano: 0, fireplace: 0, vinyl: 38, crowd: 56 },
     },
   },
   {
@@ -424,6 +608,51 @@ export const MOOD_PRESETS: MoodPreset[] = [
       soundProfile: 'soft',
       bellVariant: 'chime',
       ambientTrack: 'fireplace',
+      ambientMixer: { rain: 0, lofi_piano: 28, fireplace: 62, vinyl: 0, crowd: 0 },
+    },
+  },
+  {
+    id: 'studio_modern',
+    name: 'Studio Modern',
+    subtitle: 'Putih bersih · Tanpa vintage · Presisi',
+    swatchBg: '#fafaf9',
+    swatchGlow: '#d8e8ff',
+    patch: {
+      paperTexture: 'bond_white',
+      darkness: 0,
+      vintageIntensity: 0,
+      inkWear: 'fresh',
+      lightEnabled: true,
+      lightIntensity: 45,
+      lightSpread: 78,
+      lightTemperature: 25,
+      fontId: 'ibm_plex_mono',
+      soundProfile: 'tactile',
+      bellVariant: 'olivetti',
+      ambientTrack: 'off',
+      ambientMixer: { ...EMPTY_AMBIENT_MIXER },
+    },
+  },
+  {
+    id: 'slate_focus',
+    name: 'Slate Fokus',
+    subtitle: 'Slate gelap · Cahaya sejuk · Hujan',
+    swatchBg: '#13171e',
+    swatchGlow: '#8dc4ff',
+    patch: {
+      paperTexture: 'nord_slate',
+      darkness: 42,
+      vintageIntensity: 0,
+      inkWear: 'fresh',
+      lightEnabled: true,
+      lightIntensity: 74,
+      lightSpread: 64,
+      lightTemperature: 58,
+      fontId: 'ibm_plex_mono',
+      soundProfile: 'tactile',
+      bellVariant: 'olivetti',
+      ambientTrack: 'rain',
+      ambientMixer: { rain: 60, lofi_piano: 0, fireplace: 0, vinyl: 0, crowd: 24 },
     },
   },
 ];
@@ -431,10 +660,18 @@ export const MOOD_PRESETS: MoodPreset[] = [
 export const DEFAULT_SETTINGS: EditorSettings = {
   typingMode: 'standard',
   marginLeft: 0,
-  marginRight: 60,
+  marginRight: 100,
+  marginUnitVersion: 2,
+  tabStops: [...DEFAULT_TAB_STOPS],
+  showTabRuler: true,
   ribbonColor: 'black',
   typebarAnimation: true,
   typebarJamEnabled: true,
+  ribbonDepletionEnabled: true,
+
+  imperfectionPreset: 'classic_tilt',
+  imperfectionIntensity: 52,
+  imperfectionInStandard: false,
 
   typeguideMode: 'follow',
   lightEnabled: true,
@@ -445,10 +682,13 @@ export const DEFAULT_SETTINGS: EditorSettings = {
 
   paperTexture: 'ivory',
   paperLayout: 'unlimited',
+  paginationEnabled: false,
   darkness: 46,
   vintageIntensity: 36,
   inkWear: 'classic',
   stampStyle: 'none',
+  stampCustomText: '',
+  stampShowDate: true,
 
   soundProfile: 'classic',
   bellVariant: 'olivetti',
@@ -457,10 +697,12 @@ export const DEFAULT_SETTINGS: EditorSettings = {
   marginBell: true,
 
   ambientTrack: 'off',
-  ambientVolume: 42,
+  ambientVolume: 56,
+  ambientMixer: { ...EMPTY_AMBIENT_MIXER },
 
   fontId: 'special_elite',
   fontSize: 19,
+  letterSpacing: 0,
   lineSpacing: 'normal',
 
   autoFadeChrome: true,

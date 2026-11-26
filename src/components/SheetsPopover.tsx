@@ -1,5 +1,5 @@
 import React from 'react';
-import { Camera, Copy, Download, FilePlus2, Printer, Trash2, X } from 'lucide-react';
+import { Camera, Copy, Download, FilePlus2, Printer, Quote, Trash2, X } from 'lucide-react';
 import { realismStrokesToPlainText } from '../utils/paperExporter';
 import type { DocumentSheet } from '../types';
 
@@ -12,6 +12,7 @@ interface SheetsPopoverProps {
   onCreateSheet: () => void;
   onDeleteSheet: (id: string) => void;
   onExportPaperPng: () => void;
+  onOpenQuoteModal: () => void;
   isExportingPng: boolean;
   photoSaved: boolean;
   onExportTxt: () => void;
@@ -32,6 +33,7 @@ export const SheetsPopover: React.FC<SheetsPopoverProps> = ({
   onCreateSheet,
   onDeleteSheet,
   onExportPaperPng,
+  onOpenQuoteModal,
   isExportingPng,
   photoSaved,
   onExportTxt,
@@ -153,6 +155,18 @@ export const SheetsPopover: React.FC<SheetsPopoverProps> = ({
                 ? 'Foto Tersimpan'
                 : 'Simpan sebagai Foto (.png)'}
           </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            onClose();
+            onOpenQuoteModal();
+          }}
+          className="w-full inline-flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-[#2a231c] hover:bg-[#352c23] border border-[#e6b873]/30 text-[#f3ca86] text-xs font-medium transition-colors whitespace-nowrap"
+        >
+          <Quote className="h-3.5 w-3.5" />
+          <span>Buat Kartu Kutipan</span>
         </button>
 
         <div className="grid grid-cols-3 gap-1.5">

@@ -9,20 +9,26 @@ import {
   X,
 } from 'lucide-react';
 import {
-  AMBIENT_TRACKS,
+  AMBIENT_CHANNELS,
+  AMBIENT_MIXER_PRESETS,
   BELL_VARIANTS,
+  DEFAULT_TAB_STOPS,
   FONT_PRESETS,
+  IMPERFECTION_PRESETS,
   MOOD_PRESETS,
   PAPER_PRESETS,
   SOUND_PROFILES,
+  STAMP_CUSTOM_PRESETS,
   STAMP_STYLES,
   temperatureToLightColors,
 } from '../constants/presets';
 import { typewriterAudio } from '../audio/typewriterAudio';
 import type {
+  AmbientChannelId,
   BellVariantId,
   EditorSettings,
   FontId,
+  ImperfectionPresetId,
   InkWearId,
   LineSpacingId,
   PaperLayoutId,
@@ -38,6 +44,8 @@ interface SettingsDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   settings: EditorSettings;
+  ribbonInk: number;
+  onSwapRibbon: () => void;
   onUpdate: <K extends keyof EditorSettings>(key: K, value: EditorSettings[K]) => void;
   onApplyPatch: (patch: Partial<EditorSettings>) => void;
   onReset: () => void;
@@ -47,6 +55,8 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
   isOpen,
   onClose,
   settings,
+  ribbonInk,
+  onSwapRibbon,
   onUpdate,
   onApplyPatch,
   onReset,
@@ -172,36 +182,89 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
               </div>
               <p className="text-[11px] text-[#8f8579] leading-relaxed">
                 {settings.typingMode === 'over_realism'
-                  ? 'Tinta permanen tanpa hapus. Panah menggeser gulungan secara bebas tanpa snap otomatis, dengan kunci margin dan pita hitam/merah.'
-                  : 'Suntingan bebas dengan rasa mesin ketik klasik serta batas margin kiri dan kanan yang dapat diatur.'}
+                  ? 'Tinta permanen tanpa hapus. Panah menggeser gulungan secara bebas tanpa snap otomatis, dengan kunci margin dan pilihan pita tinta.'
+                  : 'Suntingan bebas dengan rasa mesin ketik klasik serta batas margin tetap yang proporsional terhadap lebar kertas.'}
               </p>
 
+              {/* Warna Pita Tinta (Hitam, Biru, Merah di semua mode + Koreksi di Over-Realism) */}
+              <div className="pt-2 space-y-1.5 border-t border-white/8">
+                <div className="text-xs font-medium text-[#c5bbb0]">
+                  {settings.typingMode === 'over_realism' ? 'Pita Tinta & Koreksi' : 'Warna Pita Tinta'}
+                </div>
+                <div
+                  className={`grid gap-1 p-1 rounded-lg bg-[#110f0d] ${
+                    settings.typingMode === 'over_realism' ? 'grid-cols-4' : 'grid-cols-3'
+                  }`}
+                >
+                  {(
+                    [
+                      { id: 'black', label: 'Hitam' },
+                      { id: 'blue', label: 'Biru' },
+                      { id: 'red', label: 'Merah' },
+                      ...(settings.typingMode === 'over_realism'
+                        ? [{ id: 'correction' as RibbonColorId, label: 'Koreksi' }]
+                        : []),
+                    ] as { id: RibbonColorId; label: string }[]
+                  ).map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => onUpdate('ribbonColor', opt.id)}
+                      className={`py-1.5 px-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
+                        settings.ribbonColor === opt.id
+                          ? opt.id === 'red'
+                            ? 'bg-[#361b18] text-[#f08b7e]'
+                            : opt.id === 'blue'
+                              ? 'bg-[#192c46] text-[#8bc0f7]'
+                              : opt.id === 'correction'
+                                ? 'bg-[#e8e3d8] text-[#171411]'
+                                : 'bg-[#2a241e] text-[#f3ca86]'
+                          : 'text-[#9b9184] hover:text-[#e6dfd5]'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                {settings.typingMode === 'over_realism' && (
+                  <p className="text-[11px] text-[#8f8579] leading-snug">
+                    Pintasan cepat: tekan Ctrl+Backspace atau Shift+Backspace untuk langsung menempel pita koreksi putih.
+                  </p>
+                )}
+              </div>
+
               {settings.typingMode === 'over_realism' && (
-                <div className="pt-2 space-y-1.5 border-t border-white/8">
-                  <div className="text-xs font-medium text-[#c5bbb0]">Pita Tinta (Bichrome)</div>
-                  <div className="grid grid-cols-2 gap-1.5 p-1 rounded-lg bg-[#110f0d]">
-                    {(
-                      [
-                        { id: 'black', label: 'Pita Hitam' },
-                        { id: 'red', label: 'Pita Merah' },
-                      ] as { id: RibbonColorId; label: string }[]
-                    ).map((opt) => (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        onClick={() => onUpdate('ribbonColor', opt.id)}
-                        className={`py-1.5 px-2.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
-                          settings.ribbonColor === opt.id
-                            ? opt.id === 'red'
-                              ? 'bg-[#361b18] text-[#f08b7e]'
-                              : 'bg-[#2a241e] text-[#f3ca86]'
-                            : 'text-[#9b9184] hover:text-[#e6dfd5]'
-                        }`}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
+                <div className="pt-2 space-y-3 border-t border-white/8">
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-xs font-medium text-[#ece5db]">Pita Tinta Menipis</div>
+                        <div className="text-[11px] text-[#91877b]">
+                          Tinta perlahan memudar seiring ratusan ketukan
+                        </div>
+                      </div>
+                      <ToggleSwitch
+                        checked={settings.ribbonDepletionEnabled}
+                        onChange={(val) => onUpdate('ribbonDepletionEnabled', val)}
+                        label="Aktifkan simulasi pita tinta menipis"
+                      />
+                    </div>
+                    {settings.ribbonDepletionEnabled && (
+                      <div className="flex items-center justify-between rounded-lg bg-[#110f0d] px-3 py-2 border border-white/6">
+                        <span className="text-[11px] text-[#b8afa2] tabular-nums">
+                          Sisa tinta pita: <strong className="text-[#f3ca86]">{Math.round(ribbonInk)}%</strong>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={onSwapRibbon}
+                          className="text-[11px] font-semibold text-[#e6b873] hover:text-[#f5d298] transition-colors whitespace-nowrap"
+                        >
+                          Ganti Pita Baru
+                        </button>
+                      </div>
+                    )}
                   </div>
+
                   <div className="pt-2 space-y-2.5 border-t border-white/8">
                     <div className="flex items-center justify-between">
                       <div>
@@ -218,25 +281,100 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                 </div>
               )}
 
-              {/* Margin Kiri & Kanan berlaku untuk Mode Standar maupun Over-Realism */}
+              {/* Margin Kiri & Kanan fisik tetap terhadap lebar kertas (tidak terpengaruh ukuran huruf) */}
               <div className="pt-2 space-y-3 border-t border-white/8">
                 <SliderControl
                   label="Margin Kiri"
+                  hint="Mengikuti lebar fisik kertas, tetap stabil saat ukuran huruf berubah"
                   value={settings.marginLeft}
                   min={0}
-                  max={Math.max(0, settings.marginRight - 18)}
-                  unit=" kol"
+                  max={Math.min(40, Math.max(0, settings.marginRight - 25))}
+                  unit="%"
                   onChange={(v) => onUpdate('marginLeft', v)}
                 />
 
                 <SliderControl
                   label="Margin Kanan"
                   value={settings.marginRight}
-                  min={Math.min(72, settings.marginLeft + 18)}
-                  max={74}
-                  unit=" kol"
+                  min={Math.max(50, settings.marginLeft + 25)}
+                  max={100}
+                  unit="%"
                   onChange={(v) => onUpdate('marginRight', v)}
                 />
+              </div>
+
+              {/* Penggaris Tabulasi Kustom (Tab Stops) */}
+              <div className="pt-3 space-y-2.5 border-t border-white/8">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-xs font-medium text-[#ece5db]">Penggaris Tabulasi (Tab Stops)</div>
+                    <div className="text-[11px] text-[#91877b]">
+                      Klik langsung penggaris atas kertas untuk pasang/hapus pin Tab
+                    </div>
+                  </div>
+                  <ToggleSwitch
+                    checked={settings.showTabRuler}
+                    onChange={(val) => onUpdate('showTabRuler', val)}
+                    label="Tampilkan penggaris tabulasi di kertas"
+                  />
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {settings.tabStops.length === 0 ? (
+                    <span className="text-[11px] text-[#847a6e] italic">
+                      Belum ada pin Tab (tombol Tab melompat standar)
+                    </span>
+                  ) : (
+                    settings.tabStops.map((stop) => (
+                      <button
+                        key={stop}
+                        type="button"
+                        onClick={() =>
+                          onUpdate(
+                            'tabStops',
+                            settings.tabStops.filter((v) => v !== stop)
+                          )
+                        }
+                        title={`Hapus pin Tab di ${stop}%`}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#110f0d] hover:bg-[#351f1c] border border-white/8 hover:border-[#e06d5e]/45 text-[11px] font-mono tabular-nums text-[#e5d8c3] hover:text-[#f5a79c] transition-colors"
+                      >
+                        <span>{stop}%</span>
+                        <span className="opacity-65">×</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+
+                <div className="flex items-center gap-1.5 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => onUpdate('tabStops', [...DEFAULT_TAB_STOPS])}
+                    className="px-2 py-1 rounded bg-[#141210] hover:bg-[#231e19] border border-white/8 text-[#c2b8aa] hover:text-[#f3ca86] transition-colors whitespace-nowrap"
+                  >
+                    Standar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onUpdate('tabStops', [14, 34, 54])}
+                    className="px-2 py-1 rounded bg-[#141210] hover:bg-[#231e19] border border-white/8 text-[#c2b8aa] hover:text-[#f3ca86] transition-colors whitespace-nowrap"
+                  >
+                    Puisi
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onUpdate('tabStops', [20, 50, 78])}
+                    className="px-2 py-1 rounded bg-[#141210] hover:bg-[#231e19] border border-white/8 text-[#c2b8aa] hover:text-[#f3ca86] transition-colors whitespace-nowrap"
+                  >
+                    Kolom
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onUpdate('tabStops', [])}
+                    className="ml-auto px-2 py-1 rounded text-[#91877b] hover:text-[#f08b7e] transition-colors whitespace-nowrap"
+                  >
+                    Kosongkan
+                  </button>
+                </div>
               </div>
             </section>
 
@@ -437,72 +575,157 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
 
             <div className="h-px bg-white/8" />
 
-            <section className="space-y-2.5">
-              <div className="text-xs font-medium text-[#c5bbb0]">Bentang Kertas</div>
-              <div className="grid grid-cols-2 gap-1.5 p-1 rounded-lg bg-[#110f0d]">
-                {(
-                  [
-                    { id: 'unlimited', label: 'Kertas Penuh' },
-                    { id: 'sheet', label: 'Lembar Klasik' },
-                  ] as { id: PaperLayoutId; label: string }[]
-                ).map((opt) => (
+            <section className="space-y-3.5">
+              <div className="space-y-2">
+                <div className="text-xs font-medium text-[#c5bbb0]">Bentang Kertas</div>
+                <div className="grid grid-cols-2 gap-1.5 p-1 rounded-lg bg-[#110f0d]">
+                  {(
+                    [
+                      { id: 'unlimited', label: 'Kertas Penuh' },
+                      { id: 'sheet', label: 'Lembar Klasik' },
+                    ] as { id: PaperLayoutId; label: string }[]
+                  ).map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => onUpdate('paperLayout', opt.id)}
+                      className={`py-2 px-2.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
+                        settings.paperLayout === opt.id
+                          ? 'bg-[#2a241e] text-[#f3ca86]'
+                          : 'text-[#9b9184] hover:text-[#e6dfd5]'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[11px] text-[#8f8579] leading-relaxed">
+                  {settings.paperLayout === 'unlimited'
+                    ? 'Seluruh layar dipenuhi tekstur kertas tanpa batas tepi kiri dan kanan.'
+                    : 'Tampilan selembar kertas di atas permukaan meja kerja.'}
+                </p>
+              </div>
+
+              <div className="space-y-2 pt-2 border-t border-white/8">
+                <div className="text-xs font-medium text-[#c5bbb0]">Bentuk Halaman Vertikal</div>
+                <div className="grid grid-cols-2 gap-1.5 p-1 rounded-lg bg-[#110f0d]">
                   <button
-                    key={opt.id}
                     type="button"
-                    onClick={() => onUpdate('paperLayout', opt.id)}
+                    onClick={() => onUpdate('paginationEnabled', false)}
                     className={`py-2 px-2.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
-                      settings.paperLayout === opt.id
+                      !settings.paginationEnabled
                         ? 'bg-[#2a241e] text-[#f3ca86]'
                         : 'text-[#9b9184] hover:text-[#e6dfd5]'
                     }`}
                   >
-                    {opt.label}
+                    Gulungan Bebas
                   </button>
-                ))}
+                  <button
+                    type="button"
+                    onClick={() => onUpdate('paginationEnabled', true)}
+                    className={`py-2 px-2.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
+                      settings.paginationEnabled
+                        ? 'bg-[#2a241e] text-[#f3ca86]'
+                        : 'text-[#9b9184] hover:text-[#e6dfd5]'
+                    }`}
+                  >
+                    Halaman Bernomor
+                  </button>
+                </div>
+                <p className="text-[11px] text-[#8f8579] leading-relaxed">
+                  {settings.paginationEnabled
+                    ? 'Kertas terbagi menjadi lembar-lembar terpisah vertikal dengan nomor halaman otomatis.'
+                    : 'Kertas memanjang ke bawah tanpa jeda halaman.'}
+                </p>
               </div>
-              <p className="text-[11px] text-[#8f8579] leading-relaxed">
-                {settings.paperLayout === 'unlimited'
-                  ? 'Seluruh layar dipenuhi tekstur kertas tanpa batas tepi kiri dan kanan.'
-                  : 'Tampilan selembar kertas di atas permukaan meja kerja.'}
-              </p>
             </section>
 
             <div className="h-px bg-white/8" />
 
-            <section className="space-y-2.5">
-              <div className="text-xs font-medium text-[#c5bbb0]">Tekstur Kertas</div>
-              <div className="grid grid-cols-1 gap-2">
-                {(Object.keys(PAPER_PRESETS) as PaperTextureId[]).map((id) => {
-                  const preset = PAPER_PRESETS[id];
-                  const selected = settings.paperTexture === id;
-                  return (
-                    <button
-                      key={id}
-                      type="button"
-                      onClick={() => onUpdate('paperTexture', id)}
-                      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-colors ${
-                        selected
-                          ? 'bg-[#2a231c] border-[#e6b873]/55 text-[#f6efe6]'
-                          : 'bg-[#141210] border-white/6 text-[#b0a699] hover:border-white/18'
-                      }`}
-                    >
-                      <div
-                        className="h-10 w-10 rounded-md shrink-0 border border-black/25 overflow-hidden"
-                        style={{
-                          backgroundColor: preset.swatchStyle,
-                          backgroundImage: preset.imageUrl ? `url(${preset.imageUrl})` : undefined,
-                          backgroundSize: 'cover',
-                          filter: preset.imageFilter,
-                        }}
-                      />
-                      <div className="min-w-0">
-                        <div className="text-xs font-semibold truncate">{preset.name}</div>
-                        <div className="text-[11px] text-[#91877b] truncate">{preset.description}</div>
+            <section className="space-y-4">
+              {(['modern', 'classic'] as const).map((group) => {
+                const items = (Object.keys(PAPER_PRESETS) as PaperTextureId[]).filter(
+                  (id) => PAPER_PRESETS[id].category === group
+                );
+                return (
+                  <div key={group} className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs font-medium text-[#c5bbb0]">
+                        {group === 'modern' ? 'Kertas Modern' : 'Kertas Klasik & Vintage'}
                       </div>
-                    </button>
-                  );
-                })}
-              </div>
+                      {group === 'modern' && (
+                        <span className="text-[10.5px] text-[#8f8579]">Bersih tanpa kesan usang</span>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-1 gap-2">
+                      {items.map((id) => {
+                        const preset = PAPER_PRESETS[id];
+                        const selected = settings.paperTexture === id;
+                        const swatchPatternClass =
+                          preset.pattern === 'dots'
+                            ? 'paper-modern-dots'
+                            : preset.pattern === 'grid'
+                              ? 'paper-modern-grid'
+                              : preset.pattern === 'slate'
+                                ? 'paper-modern-slate'
+                                : preset.pattern === 'bond'
+                                  ? 'paper-modern-bond'
+                                  : preset.pattern === 'charcoal'
+                                    ? 'paper-charcoal-texture'
+                                    : '';
+                        return (
+                          <button
+                            key={id}
+                            type="button"
+                            onClick={() => {
+                              const currentPreset = PAPER_PRESETS[settings.paperTexture];
+                              if (
+                                preset.category === 'modern' &&
+                                currentPreset?.category !== 'modern' &&
+                                settings.vintageIntensity > 0
+                              ) {
+                                onApplyPatch({
+                                  paperTexture: id,
+                                  vintageIntensity: 0,
+                                });
+                              } else {
+                                onUpdate('paperTexture', id);
+                              }
+                            }}
+                            className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-colors ${
+                              selected
+                                ? 'bg-[#2a231c] border-[#e6b873]/55 text-[#f6efe6]'
+                                : 'bg-[#141210] border-white/6 text-[#b0a699] hover:border-white/18'
+                            }`}
+                          >
+                            <div
+                              className={`h-10 w-10 rounded-md shrink-0 border border-black/25 overflow-hidden ${swatchPatternClass}`}
+                              style={{
+                                backgroundColor: preset.swatchStyle,
+                                backgroundImage: preset.imageUrl
+                                  ? `url(${preset.imageUrl})`
+                                  : undefined,
+                                backgroundSize: preset.imageUrl
+                                  ? 'cover'
+                                  : preset.pattern === 'dots' || preset.pattern === 'grid'
+                                    ? '10px 10px'
+                                    : undefined,
+                                filter: preset.imageFilter,
+                              }}
+                            />
+                            <div className="min-w-0">
+                              <div className="text-xs font-semibold truncate">{preset.name}</div>
+                              <div className="text-[11px] text-[#91877b] truncate">
+                                {preset.description}
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
             </section>
 
             <div className="h-px bg-white/8" />
@@ -554,8 +777,8 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                 </div>
               </div>
 
-              <div className="space-y-2 pt-1">
-                <div className="text-xs font-medium text-[#c5bbb0]">Stempel Karet Tanggal</div>
+              <div className="space-y-3 pt-1">
+                <div className="text-xs font-medium text-[#c5bbb0]">Cap Stempel Karet</div>
                 <div className="grid grid-cols-2 gap-1.5">
                   {STAMP_STYLES.map((st) => {
                     const active = settings.stampStyle === st.id;
@@ -580,6 +803,56 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                     );
                   })}
                 </div>
+
+                {settings.stampStyle !== 'none' && (
+                  <div className="space-y-2.5 rounded-lg bg-[#110f0d] border border-white/8 p-3">
+                    <div className="space-y-1.5">
+                      <label
+                        htmlFor="aksara-stamp-custom-text"
+                        className="text-[11.5px] font-medium text-[#d4cabd]"
+                      >
+                        Teks Cap Kustom
+                      </label>
+                      <input
+                        id="aksara-stamp-custom-text"
+                        type="text"
+                        maxLength={28}
+                        value={settings.stampCustomText}
+                        onChange={(e) => onUpdate('stampCustomText', e.target.value)}
+                        placeholder="Contoh: RAHASIA, DRAF I, atau Nama/Kota"
+                        className="w-full rounded-md bg-[#191613] border border-white/10 focus:border-[#e6b873]/55 px-2.5 py-1.5 text-xs text-[#f4ede2] placeholder:text-[#786f64] focus:outline-none"
+                      />
+                      <div className="flex flex-wrap gap-1 pt-0.5">
+                        {STAMP_CUSTOM_PRESETS.map((presetLabel) => (
+                          <button
+                            key={presetLabel}
+                            type="button"
+                            onClick={() => {
+                              onUpdate('stampCustomText', presetLabel);
+                              if (settings.soundProfile !== 'silent') {
+                                typewriterAudio.playRubberStamp(
+                                  Math.max(settings.soundVolume, 50)
+                                );
+                              }
+                            }}
+                            className="px-2 py-0.5 rounded bg-white/5 hover:bg-white/12 text-[10px] font-mono text-[#b8afa2] hover:text-[#f3ca86] transition-colors"
+                          >
+                            {presetLabel}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-1.5 border-t border-white/6">
+                      <span className="text-[11.5px] text-[#d4cabd]">Sertakan Tanggal Otomatis</span>
+                      <ToggleSwitch
+                        checked={settings.stampShowDate}
+                        onChange={(val) => onUpdate('stampShowDate', val)}
+                        label="Sertakan tanggal otomatis di cap stempel"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             </section>
           </>
@@ -715,28 +988,64 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
           </>
         )}
 
-        {/* TAB 4: MUSIK LATAR */}
+        {/* TAB 4: MIXER SUASANA BERLAPIS */}
         {activeTab === 'music' && (
           <>
             <section className="space-y-2.5">
-              <div className="text-xs font-medium text-[#c5bbb0]">Suasana & Musik Latar</div>
-              <div className="grid grid-cols-1 gap-1.5">
-                {AMBIENT_TRACKS.map((track) => {
-                  const selected = settings.ambientTrack === track.id;
+              <div className="text-xs font-medium text-[#c5bbb0]">Racikan Suasana Cepat</div>
+              <div className="grid grid-cols-2 gap-1.5">
+                {AMBIENT_MIXER_PRESETS.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => onUpdate('ambientMixer', { ...preset.mixer })}
+                    className="px-3 py-2 rounded-lg bg-[#141210] hover:bg-[#231e19] border border-white/8 hover:border-[#e6b873]/40 text-xs font-medium text-[#e9e1d5] text-left transition-colors whitespace-nowrap"
+                  >
+                    {preset.name}
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <div className="h-px bg-white/8" />
+
+            <section className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-medium text-[#c5bbb0]">Mixer Suasana Berlapis</div>
+                <span className="text-[10.5px] text-[#8f8579]">Bisa digabung bersamaan</span>
+              </div>
+
+              <div className="space-y-4">
+                {AMBIENT_CHANNELS.map((channel) => {
+                  const val = settings.ambientMixer?.[channel.id] ?? 0;
                   return (
-                    <button
-                      key={track.id}
-                      type="button"
-                      onClick={() => onUpdate('ambientTrack', track.id)}
-                      className={`px-3.5 py-2.5 rounded-lg border text-left transition-colors ${
-                        selected
-                          ? 'bg-[#2a231c] border-[#e6b873]/55 text-[#f6efe6]'
-                          : 'bg-[#141210] border-white/6 text-[#b0a699] hover:border-white/18'
-                      }`}
-                    >
-                      <div className="text-xs font-semibold">{track.name}</div>
-                      <div className="text-[11px] text-[#91877b] mt-0.5">{track.description}</div>
-                    </button>
+                    <div key={channel.id} className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <div className="text-xs font-medium text-[#ece5db]">{channel.name}</div>
+                          <div className="text-[10.5px] text-[#8f8579]">{channel.description}</div>
+                        </div>
+                        <span className="text-xs font-mono tabular-nums text-[#c7baa9] shrink-0">
+                          {val === 0 ? 'Mati' : `${val}%`}
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        value={val}
+                        onChange={(e) => {
+                          const nextVal = Number(e.target.value);
+                          const nextMixer = {
+                            ...settings.ambientMixer,
+                            [channel.id as AmbientChannelId]: nextVal,
+                          };
+                          onUpdate('ambientMixer', nextMixer);
+                        }}
+                        aria-label={`Volume ${channel.name}`}
+                        className="aksara-slider"
+                      />
+                    </div>
                   );
                 })}
               </div>
@@ -744,14 +1053,13 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
 
             <div className="h-px bg-white/8" />
 
-            <section className="space-y-4">
+            <section className="space-y-3">
               <SliderControl
-                label="Volume Musik Latar"
+                label="Volume Utama Suasana"
                 value={settings.ambientVolume}
                 min={0}
                 max={100}
                 unit="%"
-                disabled={settings.ambientTrack === 'off'}
                 onChange={(v) => onUpdate('ambientVolume', v)}
               />
             </section>
@@ -803,6 +1111,22 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                 onChange={(v) => onUpdate('fontSize', v)}
               />
 
+              <SliderControl
+                label="Kerapatan Antar Huruf"
+                hint="Kiri lebih rapat, kanan lebih renggang (berlaku di semua mode)"
+                value={settings.letterSpacing}
+                min={-1}
+                max={4}
+                step={0.2}
+                unit="px"
+                displayValue={
+                  Math.abs(settings.letterSpacing) < 0.05
+                    ? 'Normal'
+                    : `${settings.letterSpacing > 0 ? '+' : ''}${settings.letterSpacing.toFixed(1)} px`
+                }
+                onChange={(v) => onUpdate('letterSpacing', Number(v.toFixed(1)))}
+              />
+
               <div className="space-y-2">
                 <div className="text-xs font-medium text-[#c5bbb0]">Spasi Baris</div>
                 <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-[#110f0d]">
@@ -828,6 +1152,71 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                   ))}
                 </div>
               </div>
+
+              <div className="h-px bg-white/8" />
+
+              {/* Pengembangan Karakter Huruf Miring & Tidak Rata */}
+              <div className="space-y-3.5">
+                <div className="space-y-1">
+                  <div className="text-xs font-medium text-[#c5bbb0]">
+                    Karakter Huruf Miring & Ketukan Mesin
+                  </div>
+                  <p className="text-[11px] text-[#8f8579] leading-relaxed">
+                    Mengatur kemiringan huruf, loncatan baseline, tekanan tinta, dan efek ketukan ganda halus.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 gap-1.5">
+                  {IMPERFECTION_PRESETS.map((preset) => {
+                    const active = settings.imperfectionPreset === preset.id;
+                    return (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        onClick={() =>
+                          onApplyPatch({
+                            imperfectionPreset: preset.id as ImperfectionPresetId,
+                            imperfectionIntensity: preset.defaultIntensity,
+                          })
+                        }
+                        className={`px-3.5 py-2.5 rounded-lg border text-left transition-colors ${
+                          active
+                            ? 'bg-[#2a231c] border-[#e6b873]/55 text-[#f6efe6]'
+                            : 'bg-[#141210] border-white/6 text-[#b0a699] hover:border-white/18'
+                        }`}
+                      >
+                        <div className="text-xs font-semibold">{preset.name}</div>
+                        <div className="text-[11px] text-[#91877b] mt-0.5">{preset.description}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <SliderControl
+                  label="Intensitas Huruf Miring"
+                  value={settings.imperfectionIntensity}
+                  min={0}
+                  max={100}
+                  unit="%"
+                  onChange={(v) => onUpdate('imperfectionIntensity', v)}
+                />
+
+                <div className="flex items-center justify-between pt-1">
+                  <div>
+                    <div className="text-xs font-medium text-[#ece5db]">Aktifkan Juga di Mode Standar</div>
+                    <div className="text-[11px] text-[#91877b]">
+                      Tampilkan huruf agak miring tanpa harus menyalakan Over-Realism
+                    </div>
+                  </div>
+                  <ToggleSwitch
+                    checked={settings.imperfectionInStandard}
+                    onChange={(val) => onUpdate('imperfectionInStandard', val)}
+                    label="Aktifkan huruf miring di Mode Standar"
+                  />
+                </div>
+              </div>
+
+              <div className="h-px bg-white/8" />
 
               <div className="flex items-center justify-between pt-1">
                 <div>
@@ -878,6 +1267,7 @@ interface SliderControlProps {
   value: number;
   min: number;
   max: number;
+  step?: number;
   unit: string;
   displayValue?: string;
   disabled?: boolean;
@@ -890,6 +1280,7 @@ const SliderControl: React.FC<SliderControlProps> = ({
   value,
   min,
   max,
+  step = 1,
   unit,
   displayValue,
   disabled = false,
@@ -907,6 +1298,7 @@ const SliderControl: React.FC<SliderControlProps> = ({
       type="range"
       min={min}
       max={max}
+      step={step}
       value={value}
       disabled={disabled}
       onChange={(e) => onChange(Number(e.target.value))}

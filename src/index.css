@@ -143,6 +143,34 @@ input[type='range'].aksara-slider:focus-visible {
   background-size: 100% 100%, 100% 100%, 260px 260px;
 }
 
+/* Modern clean architectural bond white surface (subtle soft-matte finish, zero vintage yellowing) */
+.paper-modern-bond {
+  background-color: #fafaf9;
+  background-image: radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.7), rgba(240, 241, 244, 0.28) 100%);
+}
+
+/* Modern Japanese dot-grid notebook stationery */
+.paper-modern-dots {
+  background-color: #f7f7f5;
+  background-image: radial-gradient(circle, rgba(72, 82, 98, 0.26) 1.05px, transparent 1.15px);
+  background-size: 24px 24px;
+}
+
+/* Modern minimalist architectural studio grid */
+.paper-modern-grid {
+  background-color: #f4f6f8;
+  background-image:
+    linear-gradient(to right, rgba(64, 88, 120, 0.085) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(64, 88, 120, 0.085) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* Modern sleek matte dark slate surface */
+.paper-modern-slate {
+  background-color: #13171e;
+  background-image: radial-gradient(circle at 50% 15%, rgba(130, 174, 232, 0.055), transparent 62%);
+}
+
 /* Respect reduced motion */
 @media (prefers-reduced-motion: reduce) {
   .aksara-caret {
