@@ -670,12 +670,12 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                         : 'text-[#9b9184] hover:text-[#e6dfd5]'
                     }`}
                   >
-                    Halaman Bernomor
+                    Halaman A4 Bernomor
                   </button>
                 </div>
                 <p className="text-[11px] text-[#8f8579] leading-relaxed">
                   {settings.paginationEnabled
-                    ? 'Kertas terbagi menjadi lembar-lembar terpisah vertikal dengan nomor halaman otomatis.'
+                    ? 'Kertas terbagi menjadi lembar-lembar berproporsi A4 vertikal dengan nomor halaman otomatis.'
                     : 'Kertas memanjang ke bawah tanpa jeda halaman.'}
                 </p>
               </div>

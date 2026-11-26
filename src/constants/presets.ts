@@ -438,7 +438,8 @@ export const IMPERFECTION_PRESETS: ImperfectionPresetMeta[] = [
   },
 ];
 
-export const PAGE_CONTENT_HEIGHT_PX = 940;
+export const A4_ASPECT_RATIO = 297 / 210; // ~1.4142857 (ISO 216 A4 portrait)
+export const PAGE_CONTENT_HEIGHT_PX = 1471; // Exact A4 portrait height for 1040px sheet width
 export const PAGE_GAP_PX = 34;
 
 export interface FontPreset {

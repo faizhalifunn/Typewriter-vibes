@@ -1,7 +1,7 @@
 import {
+  A4_ASPECT_RATIO,
   FONT_PRESETS,
   LINE_SPACING_VALUES,
-  PAGE_CONTENT_HEIGHT_PX,
   PAPER_PRESETS,
 } from '../constants/presets';
 import { getDeterministicStrikeMetrics } from './imperfection';
@@ -105,8 +105,8 @@ export function realismStrokesToPlainText(
       const later = strokes[j];
       if (later.color !== 'correction') continue;
       if (
-        Math.abs(later.x - s.x) <= safeCharW * 0.65 &&
-        Math.abs(later.y - s.y) <= safeLineH * 0.55
+        Math.abs(later.x - s.x) <= safeCharW * 0.85 &&
+        Math.abs(later.y - s.y) <= safeLineH * 0.62
       ) {
         coveredByTape = true;
         break;
@@ -588,16 +588,18 @@ export async function exportStyledPaperPng(
   }
 
   const finalPageWidth = Math.max(pageWidth, Math.ceil(maxStrokeX + basePadX));
+  const a4PageHeight = Math.round(finalPageWidth * A4_ASPECT_RATIO);
   const rawContentHeight = isOverRealism
     ? Math.max(lineHeight * 12, maxStrokeY + lineHeight * 2)
     : Math.max(lineHeight * 12, wrappedLines.length * lineHeight);
-  const rawHeight = Math.max(1160, Math.ceil(padTop + rawContentHeight + padBottom));
+  const rawHeight = Math.max(
+    settings.paginationEnabled ? a4PageHeight : 1160,
+    Math.ceil(padTop + rawContentHeight + padBottom)
+  );
   const totalPages = settings.paginationEnabled
-    ? Math.max(1, Math.ceil(rawHeight / PAGE_CONTENT_HEIGHT_PX))
+    ? Math.max(1, Math.ceil(rawHeight / a4PageHeight))
     : 1;
-  const pageHeight = settings.paginationEnabled
-    ? totalPages * PAGE_CONTENT_HEIGHT_PX
-    : rawHeight;
+  const pageHeight = settings.paginationEnabled ? totalPages * a4PageHeight : rawHeight;
 
   const canvas = document.createElement('canvas');
   canvas.width = finalPageWidth * scale;
@@ -689,6 +691,28 @@ export async function exportStyledPaperPng(
       ctx.restore();
     }
   } else {
+    // Preserve physical white correction-tape patches stamped in Over-Realism Mode underneath Standard Mode text
+    const tapePatches = strokes.filter((st) => st.color === 'correction');
+    for (const tape of tapePatches) {
+      const drawX = basePadX + tape.x + tape.jitterX;
+      const drawY = padTop + tape.y + (lineHeight - fontSize) * 0.25 + tape.jitterY;
+      ctx.save();
+      ctx.translate(drawX, drawY);
+      if (tape.rotation) {
+        ctx.rotate((tape.rotation * Math.PI) / 180);
+      }
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = tapeColor;
+      ctx.globalAlpha = 0.93;
+      ctx.fillRect(-1.5, -2, charW + 3.5, fontSize * 1.15);
+      ctx.strokeStyle = paperPreset.isDark
+        ? 'rgba(255,255,255,0.06)'
+        : 'rgba(120, 112, 98, 0.16)';
+      ctx.lineWidth = 0.7;
+      ctx.strokeRect(-1.5, -2, charW + 3.5, fontSize * 1.15);
+      ctx.restore();
+    }
+
     let charCounter = 0;
     const useImperfectStandard =
       settings.imperfectionInStandard && settings.imperfectionIntensity > 0;
@@ -719,11 +743,11 @@ export async function exportStyledPaperPng(
   }
   ctx.restore();
 
-  // Render crisp page dividers & centered page numbers when Pagination is ON
+  // Render crisp A4 page dividers & centered page numbers when Pagination is ON
   if (settings.paginationEnabled) {
     ctx.save();
     for (let p = 1; p <= totalPages; p++) {
-      const pageBottomY = p * PAGE_CONTENT_HEIGHT_PX;
+      const pageBottomY = p * a4PageHeight;
       ctx.font = `500 12px ${fontPreset.fontFamily}`;
       ctx.fillStyle = baseInkColor;
       ctx.globalAlpha = 0.48;

@@ -1,13 +1,17 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Camera,
+  Eye,
   FileText,
   Maximize2,
   Minimize2,
+  PenLine,
   Quote,
   SlidersHorizontal,
   Volume2,
   VolumeX,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import { ambientAudio } from './audio/ambientAudio';
 import { typewriterAudio } from './audio/typewriterAudio';
@@ -19,13 +23,13 @@ import { SheetsPopover } from './components/SheetsPopover';
 import { TabRuler } from './components/TabRuler';
 import { TypeguideOverlay } from './components/TypeguideOverlay';
 import {
+  A4_ASPECT_RATIO,
   DEFAULT_SETTINGS,
   DEFAULT_TAB_STOPS,
   EMPTY_AMBIENT_MIXER,
   FONT_PRESETS,
   INITIAL_WELCOME_TEXT,
   LINE_SPACING_VALUES,
-  PAGE_CONTENT_HEIGHT_PX,
   PAPER_PRESETS,
   legacyTrackToMixer,
   temperatureToLightColors,
@@ -257,6 +261,20 @@ export default function App() {
   const [marginReleased, setMarginReleased] = useState(false);
   const [marginLockedAlert, setMarginLockedAlert] = useState(false);
 
+  // Zoom & Preview (Stop-Typing Inspection Mode)
+  const [zoomPercent, setZoomPercent] = useState(100);
+  const [isPreviewMode, setIsPreviewMode] = useState(false);
+  const [previewScrollY, setPreviewScrollY] = useState(0);
+  const [previewPanX, setPreviewPanX] = useState(0);
+  const [isPreviewPanning, setIsPreviewPanning] = useState(false);
+  const previewPanStartRef = useRef<{
+    clientX: number;
+    clientY: number;
+    startPanX: number;
+    startScrollY: number;
+  } | null>(null);
+  const zoomScale = zoomPercent / 100;
+
   const [viewport, setViewport] = useState(() => ({
     width: typeof window !== 'undefined' ? window.innerWidth : 1440,
     height: typeof window !== 'undefined' ? window.innerHeight : 900,
@@ -445,14 +463,15 @@ export default function App() {
   }, []);
 
   const focusActiveEditor = useCallback(() => {
+    if (isPreviewMode) return;
     if (isOverRealism) {
       realismInputRef.current?.focus({ preventScroll: true });
     } else {
       textareaRef.current?.focus({ preventScroll: true });
     }
-  }, [isOverRealism]);
+  }, [isOverRealism, isPreviewMode]);
 
-  // Focus appropriate input on sheet or mode change
+  // Focus appropriate input on sheet or mode change (skipped in Preview Mode)
   useEffect(() => {
     heldArrowsRef.current.clear();
     setIsFreeSliding(false);
@@ -461,6 +480,8 @@ export default function App() {
       cancelAnimationFrame(arrowRafRef.current);
       arrowRafRef.current = null;
     }
+
+    if (isPreviewMode) return;
 
     if (isOverRealism) {
       realismInputRef.current?.focus({ preventScroll: true });
@@ -472,7 +493,7 @@ export default function App() {
       setCaretIndex(endPos);
       ta.focus({ preventScroll: true });
     }
-  }, [activeSheet?.id, isOverRealism]);
+  }, [activeSheet?.id, isOverRealism, isPreviewMode]);
 
   // Reveal top bar when moving pointer
   useEffect(() => {
@@ -578,9 +599,14 @@ export default function App() {
             settings.imperfectionPreset,
             settings.ribbonColor
           );
+          // Preserve existing chalk-white correction tape patches unless sheet was cleared
+          const preservedTape =
+            activeSheet.content.trim().length > 0
+              ? (activeSheet.realismStrokes ?? []).filter((st) => st.color === 'correction')
+              : [];
           updateActiveSheet((s) => ({
             ...s,
-            realismStrokes: converted.strokes,
+            realismStrokes: [...preservedTape, ...converted.strokes],
             realismCursor: converted.cursor,
             syncedStandardSnapshot: activeSheet.content,
           }));
@@ -795,6 +821,10 @@ export default function App() {
 
   // --- STANDARD MODE KEYBOARD HANDLERS ---
   const handleStandardKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (isPreviewMode) {
+      e.preventDefault();
+      return;
+    }
     if (e.metaKey || e.ctrlKey || e.altKey) {
       if (e.key === 's' || e.key === 'S') {
         e.preventDefault();
@@ -911,6 +941,10 @@ export default function App() {
 
   // --- OVER-REALISM PHYSICAL FREE-FLOW TYPEWRITER HANDLERS ---
   const handleRealismKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (isPreviewMode) {
+      e.preventDefault();
+      return;
+    }
     const {
       soundProfile,
       soundVolume,
@@ -1292,6 +1326,7 @@ export default function App() {
 
   // Raw un-snapped analog click placement on paper in Over-Realism mode
   const handleRealismFreeClick = (rawX: number, rawY: number) => {
+    if (isPreviewMode) return;
     typewriterAudio.playPlatenTurn(
       settings.soundProfile,
       settings.soundVolume * 0.65,
@@ -1305,14 +1340,253 @@ export default function App() {
     realismInputRef.current?.focus({ preventScroll: true });
   };
 
-  // Gentle wheel scrolling over the stage to read earlier or later pages
+  // True ISO A4 portrait page height (210 x 297 mm ratio) matching paperWidth
+  const pageHeightPx = Math.max(780, Math.round(paperWidth * A4_ASPECT_RATIO));
+
+  // Paginated vertical sheets geometry (declared before Preview scroll bounds)
+  const realismMaxStrokeY = useMemo(() => {
+    let maxY = realismCursor.y;
+    for (let i = 0; i < realismStrokes.length; i++) {
+      if (realismStrokes[i].y > maxY) maxY = realismStrokes[i].y;
+    }
+    return maxY;
+  }, [realismStrokes, realismCursor.y]);
+
+  const baseStageHeight = isOverRealism
+    ? Math.max(
+        Math.round(viewport.height * 1.15),
+        Math.ceil(padTop + realismMaxStrokeY + lineHeightPx * 4 + padBottom)
+      )
+    : mirrorHeight;
+
+  // Exclude extra bottom scroll cushion when computing A4 page count so Page 1 holds a full A4 page!
+  const contentHeightForPages = isOverRealism
+    ? Math.max(pageHeightPx, Math.ceil(padTop + realismMaxStrokeY + lineHeightPx * 3 + 90))
+    : Math.max(pageHeightPx, Math.ceil(mirrorHeight - Math.max(0, padBottom - 120)));
+
+  const totalPages = settings.paginationEnabled
+    ? Math.max(1, Math.ceil(contentHeightForPages / pageHeightPx))
+    : 1;
+  const stageHeight = settings.paginationEnabled
+    ? totalPages * pageHeightPx
+    : baseStageHeight;
+
+  // Zoom & Preview Mode helpers
+  const clampZoom = useCallback((z: number) => Math.max(50, Math.min(175, Math.round(z))), []);
+
+  const maxPreviewScrollY = Math.max(0, Math.round(stageHeight * zoomScale - viewport.height + 180));
+  const maxPreviewPanX = Math.max(0, Math.round((paperWidth * zoomScale - viewport.width) / 2 + 48));
+
+  const handleZoomIn = useCallback(() => {
+    setZoomPercent((prev) => clampZoom(prev + 10));
+  }, [clampZoom]);
+
+  const handleZoomOut = useCallback(() => {
+    setZoomPercent((prev) => clampZoom(prev - 10));
+  }, [clampZoom]);
+
+  const handleZoomReset = useCallback(() => {
+    setZoomPercent(100);
+    setPreviewPanX(0);
+  }, []);
+
+  const handleFitOverviewZoom = useCallback(() => {
+    const fitWidthPct = Math.floor(((viewport.width - 72) / Math.max(1, paperWidth)) * 100);
+    const target = fitWidthPct >= 95 ? 75 : clampZoom(fitWidthPct);
+    setZoomPercent(target);
+    setPreviewPanX(0);
+  }, [viewport.width, paperWidth, clampZoom]);
+
+  const handleTogglePreviewMode = useCallback(() => {
+    setIsPreviewMode((prev) => {
+      if (!prev) {
+        // Enter Preview Mode (stop typing & blur editors)
+        heldArrowsRef.current.clear();
+        setIsFreeSliding(false);
+        if (arrowRafRef.current) {
+          cancelAnimationFrame(arrowRafRef.current);
+          arrowRafRef.current = null;
+        }
+        textareaRef.current?.blur();
+        realismInputRef.current?.blur();
+        setIsEditorFocused(false);
+        setPreviewPanX(0);
+        const curY = isOverRealism ? padTop + realismCursor.y : caretLocal.y;
+        const nextMaxScroll = Math.max(
+          0,
+          Math.round(stageHeight * zoomScale - viewport.height + 180)
+        );
+        const startScroll = Math.max(
+          0,
+          Math.min(nextMaxScroll, Math.round(curY * zoomScale - viewport.height * 0.35))
+        );
+        setPreviewScrollY(startScroll);
+        return true;
+      }
+      // Exit Preview Mode & resume typing
+      setPreviewPanX(0);
+      setManualScrollY(0);
+      requestAnimationFrame(() => {
+        if (isOverRealism) {
+          realismInputRef.current?.focus({ preventScroll: true });
+        } else {
+          textareaRef.current?.focus({ preventScroll: true });
+        }
+      });
+      return false;
+    });
+  }, [isOverRealism, padTop, realismCursor.y, caretLocal.y, stageHeight, zoomScale, viewport.height]);
+
+  // Global Ctrl+Wheel zoom, Ctrl +/-/0 zoom, and Preview Mode keyboard navigation
+  useEffect(() => {
+    const onGlobalWheel = (e: WheelEvent) => {
+      if (isQuoteModalOpen) return;
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const delta = e.deltaY < 0 ? 5 : -5;
+        setZoomPercent((prev) => clampZoom(prev + delta));
+      }
+    };
+
+    const onGlobalKeyDown = (e: KeyboardEvent) => {
+      if (isQuoteModalOpen) return;
+
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === '=' || e.key === '+') {
+          e.preventDefault();
+          handleZoomIn();
+          return;
+        }
+        if (e.key === '-' || e.key === '_') {
+          e.preventDefault();
+          handleZoomOut();
+          return;
+        }
+        if (e.key === '0') {
+          e.preventDefault();
+          handleZoomReset();
+          return;
+        }
+      }
+
+      if (!isPreviewMode) return;
+
+      const targetTag = (e.target as HTMLElement | null)?.tagName?.toLowerCase();
+      if (targetTag === 'input' || targetTag === 'textarea') return;
+
+      if (e.key === 'Escape' && !isSettingsOpen && !isSheetsOpen) {
+        e.preventDefault();
+        handleTogglePreviewMode();
+        return;
+      }
+
+      if (e.key === 'ArrowDown' || e.key === ' ') {
+        e.preventDefault();
+        const step = e.key === ' ' ? Math.round(viewport.height * 0.65) : 90;
+        setPreviewScrollY((prev) => Math.max(0, Math.min(maxPreviewScrollY, prev + step)));
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setPreviewScrollY((prev) => Math.max(0, Math.min(maxPreviewScrollY, prev - 90)));
+      } else if (e.key === 'PageDown') {
+        e.preventDefault();
+        setPreviewScrollY((prev) =>
+          Math.max(0, Math.min(maxPreviewScrollY, prev + Math.round(viewport.height * 0.78)))
+        );
+      } else if (e.key === 'PageUp') {
+        e.preventDefault();
+        setPreviewScrollY((prev) =>
+          Math.max(0, Math.min(maxPreviewScrollY, prev - Math.round(viewport.height * 0.78)))
+        );
+      } else if (e.key === 'Home') {
+        e.preventDefault();
+        setPreviewScrollY(0);
+      } else if (e.key === 'End') {
+        e.preventDefault();
+        setPreviewScrollY(maxPreviewScrollY);
+      }
+    };
+
+    window.addEventListener('wheel', onGlobalWheel, { passive: false });
+    window.addEventListener('keydown', onGlobalKeyDown);
+    return () => {
+      window.removeEventListener('wheel', onGlobalWheel);
+      window.removeEventListener('keydown', onGlobalKeyDown);
+    };
+  }, [
+    isQuoteModalOpen,
+    isPreviewMode,
+    isSettingsOpen,
+    isSheetsOpen,
+    clampZoom,
+    handleZoomIn,
+    handleZoomOut,
+    handleZoomReset,
+    handleTogglePreviewMode,
+    maxPreviewScrollY,
+    viewport.height,
+  ]);
+
+  // Smooth drag-to-pan inspection in Preview Mode
+  const handlePreviewPointerDown = (e: React.PointerEvent<HTMLElement>) => {
+    if (!isPreviewMode || e.button !== 0) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setIsPreviewPanning(true);
+    previewPanStartRef.current = {
+      clientX: e.clientX,
+      clientY: e.clientY,
+      startPanX: previewPanX,
+      startScrollY: previewScrollY,
+    };
+  };
+
+  const handlePreviewPointerMove = (e: React.PointerEvent<HTMLElement>) => {
+    if (!isPreviewPanning || !previewPanStartRef.current) return;
+    const dx = e.clientX - previewPanStartRef.current.clientX;
+    const dy = e.clientY - previewPanStartRef.current.clientY;
+    const nextScroll = Math.max(
+      0,
+      Math.min(maxPreviewScrollY, previewPanStartRef.current.startScrollY - dy)
+    );
+    const nextPanX = Math.max(
+      -maxPreviewPanX,
+      Math.min(maxPreviewPanX, previewPanStartRef.current.startPanX + dx)
+    );
+    setPreviewScrollY(nextScroll);
+    setPreviewPanX(nextPanX);
+  };
+
+  const handlePreviewPointerUp = (e: React.PointerEvent<HTMLElement>) => {
+    if (!isPreviewPanning) return;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
+    setIsPreviewPanning(false);
+    previewPanStartRef.current = null;
+  };
+
+  // Gentle wheel scrolling over the stage (free inspection in Preview Mode, reading scroll in Edit Mode)
   const handleStageWheel = (e: React.WheelEvent<HTMLDivElement>) => {
-    if (isQuoteModalOpen) return;
-    const activeCaretY = isOverRealism ? padTop + realismCursor.y : caretLocal.y;
+    if (isQuoteModalOpen || e.ctrlKey || e.metaKey) return;
+
+    if (isPreviewMode) {
+      setPreviewScrollY((prev) =>
+        Math.max(0, Math.min(maxPreviewScrollY, prev + e.deltaY * 0.95))
+      );
+      if (Math.abs(e.deltaX) > 0.5 && maxPreviewPanX > 0) {
+        setPreviewPanX((prev) =>
+          Math.max(-maxPreviewPanX, Math.min(maxPreviewPanX, prev - e.deltaX * 0.9))
+        );
+      }
+      return;
+    }
+
+    const activeCaretY = (isOverRealism ? padTop + realismCursor.y : caretLocal.y) * zoomScale;
     setManualScrollY((prev) => {
       const next = prev - e.deltaY * 0.85;
       const maxDown = Math.max(0, activeCaretY - 40);
-      const maxUp = -Math.max(240, stageHeight - activeCaretY);
+      const maxUp = -Math.max(240, stageHeight * zoomScale - activeCaretY);
       return Math.max(maxUp, Math.min(maxDown, next));
     });
   };
@@ -1473,27 +1747,42 @@ export default function App() {
   let guideX: number;
   let guideY: number;
 
-  if (settings.typeguideMode === 'static') {
+  if (isPreviewMode) {
+    const clampedPanX = Math.max(-maxPreviewPanX, Math.min(maxPreviewPanX, previewPanX));
+    const clampedScrollY = Math.max(0, Math.min(maxPreviewScrollY, previewScrollY));
+    paperLeft = Math.round((viewport.width - paperWidth * zoomScale) / 2 + clampedPanX);
+    paperTop = Math.round(88 - clampedScrollY);
     guideX = Math.round(viewport.width / 2);
     guideY = strikeLineY;
-    paperLeft = Math.round(guideX - activeCaretLocal.x);
-    paperTop = Math.round(guideY - (activeCaretLocal.y + lineHeightPx) + manualScrollY);
+  } else if (settings.typeguideMode === 'static') {
+    guideX = Math.round(viewport.width / 2);
+    guideY = strikeLineY;
+    paperLeft = Math.round(guideX - activeCaretLocal.x * zoomScale);
+    paperTop = Math.round(
+      guideY - (activeCaretLocal.y + lineHeightPx) * zoomScale + manualScrollY
+    );
   } else {
-    paperLeft = Math.round((viewport.width - paperWidth) / 2);
-    const idealTop = Math.min(92, Math.round(strikeLineY - (activeCaretLocal.y + lineHeightPx)));
+    paperLeft = Math.round((viewport.width - paperWidth * zoomScale) / 2);
+    const idealTop = Math.min(
+      92,
+      Math.round(strikeLineY - (activeCaretLocal.y + lineHeightPx) * zoomScale)
+    );
     paperTop = Math.round(idealTop + manualScrollY);
-    guideX = Math.round(paperLeft + activeCaretLocal.x);
-    guideY = Math.round(paperTop + activeCaretLocal.y + lineHeightPx);
+    guideX = Math.round(paperLeft + activeCaretLocal.x * zoomScale);
+    guideY = Math.round(paperTop + (activeCaretLocal.y + lineHeightPx) * zoomScale);
   }
 
-  // Zero transition lag during raw continuous free-sliding so analog arrow movement feels immediate!
-  const paperTransition = isFreeSliding
-    ? 'none'
-    : settings.typeguideMode === 'static'
-      ? isCarriageReturning
-        ? 'transform 260ms cubic-bezier(0.22, 1, 0.36, 1)'
-        : 'transform 72ms cubic-bezier(0.2, 0.88, 0.25, 1)'
-      : 'transform 130ms cubic-bezier(0.22, 1, 0.36, 1)';
+  // Zero transition lag during raw continuous free-sliding or preview drag-panning!
+  const paperTransition =
+    isFreeSliding || isPreviewPanning
+      ? 'none'
+      : isPreviewMode
+        ? 'transform 140ms cubic-bezier(0.22, 1, 0.36, 1)'
+        : settings.typeguideMode === 'static'
+          ? isCarriageReturning
+            ? 'transform 260ms cubic-bezier(0.22, 1, 0.36, 1)'
+            : 'transform 72ms cubic-bezier(0.2, 0.88, 0.25, 1)'
+          : 'transform 130ms cubic-bezier(0.22, 1, 0.36, 1)';
 
   // Vintage & ink visual calculations
   const vintage = settings.vintageIntensity / 100;
@@ -1529,6 +1818,7 @@ export default function App() {
 
   const showTopChrome =
     chromeVisible ||
+    isPreviewMode ||
     isSettingsOpen ||
     isSheetsOpen ||
     !settings.autoFadeChrome ||
@@ -1554,31 +1844,10 @@ export default function App() {
   const analogColDisplay = (realismCursor.x / Math.max(1, charWidth)).toFixed(1);
   const analogRowDisplay = (realismCursor.y / Math.max(1, lineHeightPx) + 1).toFixed(1);
 
-  // Paginated vertical sheets geometry & page-feed sound trigger
-  const realismMaxStrokeY = useMemo(() => {
-    let maxY = realismCursor.y;
-    for (let i = 0; i < realismStrokes.length; i++) {
-      if (realismStrokes[i].y > maxY) maxY = realismStrokes[i].y;
-    }
-    return maxY;
-  }, [realismStrokes, realismCursor.y]);
-
-  const baseStageHeight = isOverRealism
-    ? Math.max(
-        Math.round(viewport.height * 1.15),
-        Math.ceil(padTop + realismMaxStrokeY + lineHeightPx * 4 + padBottom)
-      )
-    : mirrorHeight;
-
-  const totalPages = settings.paginationEnabled
-    ? Math.max(1, Math.ceil(baseStageHeight / PAGE_CONTENT_HEIGHT_PX))
-    : 1;
-  const stageHeight = settings.paginationEnabled
-    ? totalPages * PAGE_CONTENT_HEIGHT_PX
-    : baseStageHeight;
+  // Page-feed sound trigger when crossing page boundaries
 
   useEffect(() => {
-    const currentPageIdx = Math.floor(Math.max(0, activeCaretLocal.y) / PAGE_CONTENT_HEIGHT_PX);
+    const currentPageIdx = Math.floor(Math.max(0, activeCaretLocal.y) / pageHeightPx);
     if (settings.paginationEnabled && currentPageIdx > lastPageIndexRef.current) {
       typewriterAudio.playPaperFeed(
         settings.soundProfile,
@@ -1589,6 +1858,7 @@ export default function App() {
     lastPageIndexRef.current = currentPageIdx;
   }, [
     activeCaretLocal.y,
+    pageHeightPx,
     settings.paginationEnabled,
     settings.soundProfile,
     settings.soundVolume,
@@ -1677,11 +1947,13 @@ export default function App() {
       </span>
 
       {/* Hidden direct keyboard input capture for Over-Realism Mode */}
-      {isOverRealism && (
+      {isOverRealism && !isPreviewMode && (
         <input
           ref={realismInputRef}
           type="text"
           value=""
+          readOnly={isPreviewMode}
+          tabIndex={isPreviewMode ? -1 : 0}
           onChange={() => {}}
           onKeyDown={handleRealismKeyDown}
           onKeyUp={handleRealismKeyUp}
@@ -1880,6 +2152,34 @@ export default function App() {
 
           <button
             type="button"
+            onClick={handleTogglePreviewMode}
+            aria-label={isPreviewMode ? 'Lanjut mengetik' : 'Stop mengetik & pratinjau'}
+            title={
+              isPreviewMode
+                ? 'Keluar pratinjau & lanjut mengetik (Esc)'
+                : 'Stop mengetik & masuk mode pratinjau'
+            }
+            className={`inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-xs font-medium border transition-colors whitespace-nowrap shrink-0 ${
+              isPreviewMode
+                ? 'bg-[#e6b873] text-[#17130f] border-[#e6b873] hover:bg-[#f0c787]'
+                : 'bg-[#1e1a16]/90 text-[#f0dec2] border-[#f5e6cf]/14 hover:bg-[#2a241d]'
+            }`}
+          >
+            {isPreviewMode ? (
+              <>
+                <PenLine className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Lanjut Ketik</span>
+              </>
+            ) : (
+              <>
+                <Eye className="h-3.5 w-3.5 text-[#e6b873]" />
+                <span className="hidden md:inline">Pratinjau</span>
+              </>
+            )}
+          </button>
+
+          <button
+            type="button"
             onClick={handleOpenQuoteModal}
             aria-label="Buat kartu kutipan"
             title="Buat Kartu Kutipan (1:1, 4:5, 9:16)"
@@ -1952,13 +2252,23 @@ export default function App() {
         </div>
       </header>
 
-      {/* Sleek Top Ribbon & Carriage Rail (margins moved to direct ruler drag + Settings for a cleaner canvas) */}
-      <div
-        onMouseEnter={() => setChromeVisible(true)}
-        className={`fixed top-14 left-1/2 -translate-x-1/2 z-30 flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 px-3.5 py-1.5 rounded-lg bg-[#171411]/86 border border-[#f5e6cf]/11 backdrop-blur-md text-[11px] text-[#d3cabd] shadow-lg transition-opacity duration-300 no-print max-w-[95vw] ${
-          showTopChrome ? 'opacity-100' : 'opacity-12 hover:opacity-100'
-        }`}
-      >
+      {/* Sleek Top Ribbon & Carriage Rail (replaced by clean Preview Banner when typing is stopped) */}
+      {isPreviewMode ? (
+        <div
+          onMouseEnter={() => setChromeVisible(true)}
+          className="fixed top-14 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2.5 px-3.5 py-1.5 rounded-lg bg-[#171411]/90 border border-[#e6b873]/30 backdrop-blur-md text-[11px] text-[#e7dccb] shadow-lg no-print max-w-[95vw]"
+        >
+          <Eye className="h-3.5 w-3.5 text-[#e6b873] shrink-0" />
+          <span className="whitespace-nowrap">Mode Pratinjau · Pengetikan dihentikan</span>
+          <span className="hidden sm:inline text-[#8d8377]">· Gulir atau seret kertas</span>
+        </div>
+      ) : (
+        <div
+          onMouseEnter={() => setChromeVisible(true)}
+          className={`fixed top-14 left-1/2 -translate-x-1/2 z-30 flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 px-3.5 py-1.5 rounded-lg bg-[#171411]/86 border border-[#f5e6cf]/11 backdrop-blur-md text-[11px] text-[#d3cabd] shadow-lg transition-opacity duration-300 no-print max-w-[95vw] ${
+            showTopChrome ? 'opacity-100' : 'opacity-12 hover:opacity-100'
+          }`}
+        >
 
         {/* Ink Ribbon Selector (Black, Blue, Red across all modes + White Correction Tape in Over-Realism) */}
         <div className="flex items-center gap-1 whitespace-nowrap">
@@ -2109,12 +2419,23 @@ export default function App() {
           </>
         )}
       </div>
+      )}
 
       {/* Physical Moving/Centered Paper Sheet Stage */}
       <main
-        className="relative h-full w-full overflow-hidden"
+        className={`relative h-full w-full overflow-hidden ${
+          isPreviewMode
+            ? isPreviewPanning
+              ? 'cursor-grabbing'
+              : 'cursor-grab'
+            : ''
+        }`}
+        onPointerDown={handlePreviewPointerDown}
+        onPointerMove={handlePreviewPointerMove}
+        onPointerUp={handlePreviewPointerUp}
+        onPointerCancel={handlePreviewPointerUp}
         onClick={(e) => {
-          if (e.target === e.currentTarget) {
+          if (!isPreviewMode && e.target === e.currentTarget) {
             focusActiveEditor();
           }
         }}
@@ -2126,19 +2447,22 @@ export default function App() {
           style={{
             width: `${paperWidth}px`,
             minHeight: `${stageHeight}px`,
+            transformOrigin: 'top left',
             transform: `translate3d(${paperLeft}px, ${
-              paperTop + (strikePulse && settings.typebarAnimation ? 0.75 : 0)
-            }px, 0)`,
+              paperTop + (!isPreviewMode && strikePulse && settings.typebarAnimation ? 0.75 : 0)
+            }px, 0) scale(${zoomScale})`,
             transition: paperTransition,
             backgroundColor: isUnlimitedPaper ? 'transparent' : paperPreset.baseBg,
             boxShadow: isUnlimitedPaper
               ? 'none'
               : '0 28px 90px rgba(0, 0, 0, 0.62), 0 4px 18px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 245, 228, 0.08)',
           }}
-          onClick={focusActiveEditor}
+          onClick={() => {
+            if (!isPreviewMode) focusActiveEditor();
+          }}
         >
-          {/* Interactive Top-of-Paper Mechanical Margin & Tab Ruler */}
-          {settings.showTabRuler && (
+          {/* Interactive Top-of-Paper Mechanical Margin & Tab Ruler (hidden in Preview Mode) */}
+          {settings.showTabRuler && !isPreviewMode && (
             <TabRuler
               padX={padX}
               printableWidth={printableWidth}
@@ -2276,8 +2600,8 @@ export default function App() {
             </>
           )}
 
-          {/* Custom Crisp Caret Synchronized with Typeguide */}
-          {isEditorFocused && (isOverRealism || !hasSelection) && (
+          {/* Custom Crisp Caret Synchronized with Typeguide (hidden in Preview Mode) */}
+          {!isPreviewMode && isEditorFocused && (isOverRealism || !hasSelection) && (
             <div
               aria-hidden="true"
               className={`pointer-events-none absolute left-0 top-0 z-10 rounded-[1px] no-print ${
@@ -2316,11 +2640,11 @@ export default function App() {
             />
           )}
 
-          {/* Paginated Vertical Sheet Separators & Centered Page Numbers */}
+          {/* Paginated Vertical A4 Sheet Separators & Centered Page Numbers */}
           {settings.paginationEnabled &&
             Array.from({ length: totalPages }).map((_, idx) => {
               const pageNum = idx + 1;
-              const pageEndY = pageNum * PAGE_CONTENT_HEIGHT_PX;
+              const pageEndY = pageNum * pageHeightPx;
               return (
                 <React.Fragment key={`page-chrome-${pageNum}`}>
                   <div
@@ -2384,13 +2708,43 @@ export default function App() {
               inkOpacity={inkOpacity}
               inkTextShadow={inkTextShadow}
               paginationEnabled={settings.paginationEnabled}
-              showMarginBrackets={!settings.showTabRuler}
-              showRightMarginGuide={marginLockedAlert}
+              pageHeightPx={pageHeightPx}
+              showMarginBrackets={!settings.showTabRuler && !isPreviewMode}
+              showRightMarginGuide={!isPreviewMode && marginLockedAlert}
+              zoomScale={zoomScale}
+              isPreviewMode={isPreviewMode}
               onFreePositionClick={handleRealismFreeClick}
             />
           ) : (
             <>
-              {/* Clean unobstructed paper surface (margin guide lines appear on TabRuler hover/drag) */}
+              {/* Preserved Chalk-White Correction Tape Patches stamped in Over-Realism Mode */}
+              {realismStrokes.some((s) => s.color === 'correction') && (
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0 z-[3] overflow-hidden select-none"
+                >
+                  {realismStrokes
+                    .filter((s) => s.color === 'correction')
+                    .map((s) => (
+                      <span
+                        key={`std-tape-${s.id}`}
+                        className="pointer-events-none absolute block rounded-[1.5px]"
+                        style={{
+                          left: `${padX + s.x - 1.5}px`,
+                          top: `${padTop + s.y + (lineHeightPx - settings.fontSize * 1.18) * 0.45}px`,
+                          width: `${Math.max(10, charWidth + 3.5)}px`,
+                          height: `${Math.round(settings.fontSize * 1.18)}px`,
+                          backgroundColor: paperPreset.isDark ? paperPreset.baseBg : '#faf8f3',
+                          opacity: 0.93,
+                          boxShadow: paperPreset.isDark
+                            ? 'inset 0 0 0 0.7px rgba(255,255,255,0.08)'
+                            : 'inset 0 0 0 0.7px rgba(128, 118, 104, 0.24), 0 0.5px 1px rgba(0,0,0,0.08)',
+                          transform: `translate(${s.jitterX.toFixed(2)}px, ${s.jitterY.toFixed(2)}px) rotate(${(s.rotation * 0.5).toFixed(2)}deg)`,
+                        }}
+                      />
+                    ))}
+                </div>
+              )}
 
               {/* Hidden Mirror Div for Exact Caret (X, Y) Tracking in Standard Mode */}
               <div
@@ -2450,12 +2804,18 @@ export default function App() {
               <textarea
                 ref={textareaRef}
                 value={content}
+                readOnly={isPreviewMode}
+                tabIndex={isPreviewMode ? -1 : 0}
                 onChange={handleStandardChange}
                 onKeyDown={handleStandardKeyDown}
                 onKeyUp={handleStandardKeyUp}
                 onClick={syncCaretFromTextarea}
                 onSelect={syncCaretFromTextarea}
                 onFocus={() => {
+                  if (isPreviewMode) {
+                    textareaRef.current?.blur();
+                    return;
+                  }
                   setIsEditorFocused(true);
                   syncCaretFromTextarea();
                 }}
@@ -2464,8 +2824,10 @@ export default function App() {
                 autoCorrect="off"
                 autoCapitalize="off"
                 aria-label="Lembar ketikan Aksara"
-                placeholder="Mulai mengetik di sini..."
-                className={`relative z-10 block w-full resize-none bg-transparent outline-none caret-transparent select-text ${
+                placeholder={isPreviewMode ? '' : 'Mulai mengetik di sini...'}
+                className={`relative z-10 block w-full resize-none bg-transparent outline-none caret-transparent ${
+                  isPreviewMode ? 'pointer-events-none select-none' : 'select-text'
+                } ${
                   showStandardImperfection ? 'placeholder:text-[#8c8173]/55' : ''
                 } ${fontPreset.className}`}
                 style={{
@@ -2491,19 +2853,21 @@ export default function App() {
       </main>
 
       {/* Illuminated Metallic Typeguide + Upward Light Cone + Darkness Spotlight + Flying Typebar */}
-      <TypeguideOverlay
-        x={guideX}
-        y={guideY}
-        lineHeight={lineHeightPx}
-        settings={settings}
-        isDarkPaper={paperPreset.isDark}
-        isCarriageReturning={isCarriageReturning}
-        strikePulse={strikePulse}
-        strikeAngle={strikeAngle}
-        isTypebarJammed={isTypebarJammed}
-      />
+      {!isPreviewMode && (
+        <TypeguideOverlay
+          x={guideX}
+          y={guideY}
+          lineHeight={lineHeightPx}
+          settings={settings}
+          isDarkPaper={paperPreset.isDark}
+          isCarriageReturning={isCarriageReturning}
+          strikePulse={strikePulse}
+          strikeAngle={strikeAngle}
+          isTypebarJammed={isTypebarJammed}
+        />
+      )}
 
-      {manualScrollY !== 0 && (
+      {!isPreviewMode && manualScrollY !== 0 && (
         <button
           type="button"
           onClick={() => {
@@ -2515,6 +2879,88 @@ export default function App() {
           Kembali ke posisi ketikan
         </button>
       )}
+
+      {/* Floating Bottom-Right Zoom & Preview Dock */}
+      <div
+        onMouseEnter={() => setChromeVisible(true)}
+        className={`fixed bottom-5 right-5 z-30 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#171411]/90 border border-[#f5e6cf]/14 backdrop-blur-md text-[11px] text-[#ded5c8] shadow-lg transition-opacity duration-300 no-print ${
+          showTopChrome || isPreviewMode || zoomPercent !== 100
+            ? 'opacity-100'
+            : 'opacity-20 hover:opacity-100'
+        }`}
+      >
+        <button
+          type="button"
+          onClick={handleZoomOut}
+          disabled={zoomPercent <= 50}
+          aria-label="Perkecil tampilan"
+          title="Perkecil (Ctrl + -)"
+          className="h-7 w-7 inline-flex items-center justify-center rounded-md text-[#c8beb0] hover:text-[#faf4eb] hover:bg-white/8 disabled:opacity-35 transition-colors"
+        >
+          <ZoomOut className="h-3.5 w-3.5" />
+        </button>
+
+        <button
+          type="button"
+          onClick={handleZoomReset}
+          aria-label="Reset zoom ke 100%"
+          title="Klik untuk reset ke 100% (Ctrl + 0)"
+          className="px-1.5 py-1 rounded-md font-mono tabular-nums text-[11px] text-[#f0dec2] hover:bg-white/8 transition-colors min-w-[44px] text-center"
+        >
+          {zoomPercent}%
+        </button>
+
+        <button
+          type="button"
+          onClick={handleZoomIn}
+          disabled={zoomPercent >= 175}
+          aria-label="Perbesar tampilan"
+          title="Perbesar (Ctrl + +)"
+          className="h-7 w-7 inline-flex items-center justify-center rounded-md text-[#c8beb0] hover:text-[#faf4eb] hover:bg-white/8 disabled:opacity-35 transition-colors"
+        >
+          <ZoomIn className="h-3.5 w-3.5" />
+        </button>
+
+        {isPreviewMode && (
+          <button
+            type="button"
+            onClick={handleFitOverviewZoom}
+            title="Tampilan keseluruhan halaman"
+            className="px-2 py-1 rounded-md text-[11px] text-[#c8beb0] hover:text-[#f5d59c] hover:bg-white/8 transition-colors whitespace-nowrap"
+          >
+            Pas
+          </button>
+        )}
+
+        <span className="h-4 w-px bg-white/12 mx-0.5" aria-hidden="true" />
+
+        <button
+          type="button"
+          onClick={handleTogglePreviewMode}
+          title={
+            isPreviewMode
+              ? 'Lanjut mengetik (Esc)'
+              : 'Stop mengetik & masuk mode pratinjau'
+          }
+          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md font-medium transition-colors whitespace-nowrap ${
+            isPreviewMode
+              ? 'bg-[#e6b873] text-[#17130f] hover:bg-[#f0c787]'
+              : 'text-[#e5d9c6] hover:bg-white/8 hover:text-[#f5d59c]'
+          }`}
+        >
+          {isPreviewMode ? (
+            <>
+              <PenLine className="h-3.5 w-3.5" />
+              <span>Lanjut Ketik</span>
+            </>
+          ) : (
+            <>
+              <Eye className="h-3.5 w-3.5 text-[#e6b873]" />
+              <span>Pratinjau</span>
+            </>
+          )}
+        </button>
+      </div>
 
       {/* Slide-over Sheets Manager (Left) */}
       <SheetsPopover

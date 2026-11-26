@@ -15,7 +15,7 @@ interface ChannelBus {
 class AmbientAudioEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
-  private masterVolume = 0.55;
+  private masterVolume = 0.6;
   private mixer: AmbientMixerState = {
     rain: 0,
     lofi_piano: 0,
@@ -35,7 +35,7 @@ class AmbientAudioEngine {
       if (!AudioCtx) return null;
       this.ctx = new AudioCtx();
       this.masterGain = this.ctx.createGain();
-      this.masterGain.gain.value = Math.max(0.0001, this.masterVolume * 0.65);
+      this.masterGain.gain.value = Math.max(0.0001, this.masterVolume * 0.85);
       this.masterGain.connect(this.ctx.destination);
     }
     if (this.ctx.state === 'suspended') {
@@ -49,7 +49,7 @@ class AmbientAudioEngine {
     if (this.ctx && this.masterGain) {
       const now = this.ctx.currentTime;
       this.masterGain.gain.cancelScheduledValues(now);
-      this.masterGain.gain.setTargetAtTime(Math.max(0.0001, this.masterVolume * 0.65), now, 0.12);
+      this.masterGain.gain.setTargetAtTime(Math.max(0.0001, this.masterVolume * 0.85), now, 0.12);
     }
   }
 
@@ -70,7 +70,7 @@ class AmbientAudioEngine {
 
     const now = ctx.currentTime;
     this.masterGain.gain.cancelScheduledValues(now);
-    this.masterGain.gain.setTargetAtTime(Math.max(0.0001, this.masterVolume * 0.65), now, 0.12);
+    this.masterGain.gain.setTargetAtTime(Math.max(0.0001, this.masterVolume * 0.85), now, 0.12);
 
     for (const id of channelIds) {
       const level = Math.max(0, Math.min(1, (nextMixer[id] ?? 0) / 100));
@@ -138,7 +138,7 @@ class AmbientAudioEngine {
     const gain = ctx.createGain();
     const now = ctx.currentTime;
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.linearRampToValueAtTime(initialLevel, now + 0.65);
+    gain.gain.linearRampToValueAtTime(initialLevel, now + 0.5);
     gain.connect(this.masterGain);
 
     const bus: ChannelBus = {
@@ -183,7 +183,8 @@ class AmbientAudioEngine {
           b3 = 0.86650 * b3 + white * 0.3104856;
           b4 = 0.55000 * b4 + white * 0.5329522;
           b5 = -0.7616 * b5 - white * 0.0168980;
-          out[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.06;
+          // Normalized rich pink noise level (clearly audible through bandpass filters)
+          out[i] = Math.max(-1, Math.min(1, (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.14));
           b6 = white * 0.115926;
         }
       } else {
@@ -191,37 +192,75 @@ class AmbientAudioEngine {
         for (let i = 0; i < length; i++) {
           const white = Math.random() * 2 - 1;
           last = (last + 0.02 * white) / 1.02;
-          out[i] = last * 1.9;
+          out[i] = Math.max(-1, Math.min(1, last * 2.4));
         }
       }
     }
     return buffer;
   }
 
+  /**
+   * Rich, unmistakably clear Rain on Window Glass:
+   * - Steady stereo outdoor rainfall body (warm mid-band pink noise)
+   * - Crisp rain-patter layer on roof/leaves (upper mid sparkle with gentle wind swell)
+   * - Soft distant low rain floor
+   * - Frequent organic raindrop taps & water pings hitting the windowpane
+   */
   private buildRain(ctx: AudioContext, bus: ChannelBus) {
-    const pinkBuf = this.createColoredNoiseBuffer(ctx, 4.0, 'pink');
-    const src = ctx.createBufferSource();
-    src.buffer = pinkBuf;
-    src.loop = true;
+    const pinkBuf = this.createColoredNoiseBuffer(ctx, 5.0, 'pink');
 
-    const lp = ctx.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.value = 1850;
+    // Layer 1: Main steady rainfall wash
+    const mainSrc = ctx.createBufferSource();
+    mainSrc.buffer = pinkBuf;
+    mainSrc.loop = true;
 
-    const hp = ctx.createBiquadFilter();
-    hp.type = 'highpass';
-    hp.frequency.value = 260;
+    const mainLp = ctx.createBiquadFilter();
+    mainLp.type = 'lowpass';
+    mainLp.frequency.value = 2600;
 
-    const g = ctx.createGain();
-    g.gain.value = 0.54;
+    const mainHp = ctx.createBiquadFilter();
+    mainHp.type = 'highpass';
+    mainHp.frequency.value = 340;
 
-    src.connect(lp);
-    lp.connect(hp);
-    hp.connect(g);
-    g.connect(bus.gain);
-    src.start();
-    bus.nodes.push(src, lp, hp, g);
+    const mainGain = ctx.createGain();
+    mainGain.gain.value = 0.72;
 
+    mainSrc.connect(mainLp);
+    mainLp.connect(mainHp);
+    mainHp.connect(mainGain);
+    mainGain.connect(bus.gain);
+    mainSrc.start();
+    bus.nodes.push(mainSrc, mainLp, mainHp, mainGain);
+
+    // Layer 2: Crisp raindrop patter sparkle with slow wind-gust modulation
+    const patterSrc = ctx.createBufferSource();
+    patterSrc.buffer = pinkBuf;
+    patterSrc.loop = true;
+
+    const patterBp = ctx.createBiquadFilter();
+    patterBp.type = 'bandpass';
+    patterBp.frequency.value = 4200;
+    patterBp.Q.value = 0.7;
+
+    const patterGain = ctx.createGain();
+    patterGain.gain.value = 0.34;
+
+    const gustLfo = ctx.createOscillator();
+    gustLfo.type = 'sine';
+    gustLfo.frequency.value = 0.14;
+    const gustDepth = ctx.createGain();
+    gustDepth.gain.value = 0.11;
+    gustLfo.connect(gustDepth);
+    gustDepth.connect(patterGain.gain);
+
+    patterSrc.connect(patterBp);
+    patterBp.connect(patterGain);
+    patterGain.connect(bus.gain);
+    patterSrc.start(0, 1.7);
+    gustLfo.start();
+    bus.nodes.push(patterSrc, patterBp, patterGain, gustLfo, gustDepth);
+
+    // Layer 3: Soft distant outdoor rumble
     const brownBuf = this.createColoredNoiseBuffer(ctx, 4.0, 'brown');
     const rumble = ctx.createBufferSource();
     rumble.buffer = brownBuf;
@@ -229,10 +268,10 @@ class AmbientAudioEngine {
 
     const rFilter = ctx.createBiquadFilter();
     rFilter.type = 'lowpass';
-    rFilter.frequency.value = 340;
+    rFilter.frequency.value = 260;
 
     const rGain = ctx.createGain();
-    rGain.gain.value = 0.26;
+    rGain.gain.value = 0.32;
 
     rumble.connect(rFilter);
     rFilter.connect(rGain);
@@ -240,23 +279,62 @@ class AmbientAudioEngine {
     rumble.start();
     bus.nodes.push(rumble, rFilter, rGain);
 
+    // Layer 4: Frequent crisp raindrop taps hitting the window glass
     const dropTimer = window.setInterval(() => {
-      if (!bus.active || Math.random() > 0.65) return;
+      if (!bus.active) return;
       const now = ctx.currentTime;
-      const osc = ctx.createOscillator();
-      const dGain = ctx.createGain();
-      const f = 900 + Math.random() * 1400;
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(f, now);
-      osc.frequency.exponentialRampToValueAtTime(f * 1.35, now + 0.035);
-      dGain.gain.setValueAtTime(0.0001, now);
-      dGain.gain.linearRampToValueAtTime(0.022, now + 0.004);
-      dGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.045);
-      osc.connect(dGain);
-      dGain.connect(bus.gain);
-      osc.start(now);
-      osc.stop(now + 0.05);
-    }, 320);
+
+      // Short percussive droplet tap on glass
+      if (Math.random() < 0.75) {
+        const len = Math.floor(ctx.sampleRate * 0.012);
+        const dBuf = ctx.createBuffer(1, len, ctx.sampleRate);
+        const ch = dBuf.getChannelData(0);
+        for (let i = 0; i < len; i++) {
+          ch[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.0022));
+        }
+        const tap = ctx.createBufferSource();
+        tap.buffer = dBuf;
+
+        const bp = ctx.createBiquadFilter();
+        bp.type = 'bandpass';
+        bp.frequency.value = 2200 + Math.random() * 3200;
+        bp.Q.value = 2.6;
+
+        const dGain = ctx.createGain();
+        dGain.gain.value = 0.14 + Math.random() * 0.16;
+
+        const pan = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+        if (pan) {
+          pan.pan.value = (Math.random() - 0.5) * 1.4;
+          tap.connect(bp);
+          bp.connect(dGain);
+          dGain.connect(pan);
+          pan.connect(bus.gain);
+        } else {
+          tap.connect(bp);
+          bp.connect(dGain);
+          dGain.connect(bus.gain);
+        }
+        tap.start(now + Math.random() * 0.04);
+      }
+
+      // Occasional resonant water droplet plink
+      if (Math.random() < 0.35) {
+        const osc = ctx.createOscillator();
+        const pGain = ctx.createGain();
+        const f = 1100 + Math.random() * 1400;
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(f, now);
+        osc.frequency.exponentialRampToValueAtTime(f * 1.45, now + 0.032);
+        pGain.gain.setValueAtTime(0.0001, now);
+        pGain.gain.linearRampToValueAtTime(0.038, now + 0.003);
+        pGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.042);
+        osc.connect(pGain);
+        pGain.connect(bus.gain);
+        osc.start(now);
+        osc.stop(now + 0.048);
+      }
+    }, 115);
     bus.timers.push(dropTimer);
   }
 
@@ -278,7 +356,7 @@ class AmbientAudioEngine {
     lfoGain.connect(lp.frequency);
 
     const g = ctx.createGain();
-    g.gain.value = 0.72;
+    g.gain.value = 0.65;
 
     src.connect(lp);
     lp.connect(g);
@@ -288,7 +366,7 @@ class AmbientAudioEngine {
     bus.nodes.push(src, lp, lfo, lfoGain, g);
 
     const crackleTimer = window.setInterval(() => {
-      if (!bus.active || Math.random() > 0.44) return;
+      if (!bus.active || Math.random() > 0.48) return;
       const now = ctx.currentTime;
       const len = Math.floor(ctx.sampleRate * 0.015);
       const buf = ctx.createBuffer(1, len, ctx.sampleRate);
@@ -305,13 +383,13 @@ class AmbientAudioEngine {
       bp.Q.value = 2.0;
 
       const cGain = ctx.createGain();
-      cGain.gain.value = 0.14 + Math.random() * 0.24;
+      cGain.gain.value = 0.16 + Math.random() * 0.24;
 
       cSrc.connect(bp);
       bp.connect(cGain);
       cGain.connect(bus.gain);
       cSrc.start(now);
-    }, 190);
+    }, 185);
     bus.timers.push(crackleTimer);
   }
 
@@ -327,7 +405,7 @@ class AmbientAudioEngine {
     hp.Q.value = 0.8;
 
     const hGain = ctx.createGain();
-    hGain.gain.value = 0.095;
+    hGain.gain.value = 0.085;
 
     hiss.connect(hp);
     hp.connect(hGain);
@@ -348,7 +426,7 @@ class AmbientAudioEngine {
       osc.type = 'sine';
       osc.frequency.value = f;
       const g = ctx.createGain();
-      g.gain.value = idx === 0 ? 0.04 : 0.022;
+      g.gain.value = idx === 0 ? 0.045 : 0.025;
       osc.connect(g);
       g.connect(lp);
       osc.start();
@@ -356,7 +434,7 @@ class AmbientAudioEngine {
     });
 
     const dustTimer = window.setInterval(() => {
-      if (!bus.active || Math.random() > 0.38) return;
+      if (!bus.active || Math.random() > 0.4) return;
       const now = ctx.currentTime;
       const len = Math.floor(ctx.sampleRate * 0.006);
       const buf = ctx.createBuffer(1, len, ctx.sampleRate);
@@ -372,13 +450,13 @@ class AmbientAudioEngine {
       f.frequency.value = 2800;
 
       const g = ctx.createGain();
-      g.gain.value = 0.08 + Math.random() * 0.14;
+      g.gain.value = 0.09 + Math.random() * 0.14;
 
       src.connect(f);
       f.connect(g);
       g.connect(bus.gain);
       src.start(now);
-    }, 230);
+    }, 220);
     bus.timers.push(dustTimer);
   }
 
@@ -422,8 +500,8 @@ class AmbientAudioEngine {
         overtoneGain.gain.value = 0.14;
 
         noteGain.gain.setValueAtTime(0.0001, noteStart);
-        noteGain.gain.linearRampToValueAtTime(0.075, noteStart + 0.08);
-        noteGain.gain.exponentialRampToValueAtTime(0.028, noteStart + 1.8);
+        noteGain.gain.linearRampToValueAtTime(0.085, noteStart + 0.08);
+        noteGain.gain.exponentialRampToValueAtTime(0.032, noteStart + 1.8);
         noteGain.gain.exponentialRampToValueAtTime(0.0002, noteStart + 4.8);
 
         osc.connect(noteGain);
@@ -444,13 +522,21 @@ class AmbientAudioEngine {
   }
 
   /**
-   * Procedural Bustling Cafe / Crowded Public Room Ambience (100% offline Web Audio API):
-   * - Warm room acoustic floor
-   * - 3 overlapping formant-filtered speech murmur bands with organic LFO cadence
-   * - Occasional soft ceramic cup/saucer clinks & distant espresso steam bursts
+   * Authentic Bustling Cafe / Crowded Public Room Ambience (ZERO rain-like noise wash!):
+   * - Soft, warm indoor hall reverberant body (low-mid only, no hiss)
+   * - Overlapping multi-speaker procedural voice murmur using pitched glottal oscillators
+   *   routed through dual vowel formant filters (F1/F2) with natural syllable phrasing & stereo pan
+   * - Realistic cafe foley: ceramic cup/saucer clinks, spoon stirs, soft wooden table thuds
    */
   private buildCrowdAmbience(ctx: AudioContext, bus: ChannelBus) {
-    // 1. Warm room acoustic body (distant crowd hum)
+    // Master indoor room tone softener so voices feel naturally distant & cozy
+    const roomLp = ctx.createBiquadFilter();
+    roomLp.type = 'lowpass';
+    roomLp.frequency.value = 1650;
+    roomLp.connect(bus.gain);
+    bus.nodes.push(roomLp);
+
+    // 1. Very subtle low-mid room presence (strictly <= 360Hz, zero high-frequency rain hiss!)
     const brownBuf = this.createColoredNoiseBuffer(ctx, 5.0, 'brown');
     const roomSrc = ctx.createBufferSource();
     roomSrc.buffer = brownBuf;
@@ -458,134 +544,175 @@ class AmbientAudioEngine {
 
     const roomBp = ctx.createBiquadFilter();
     roomBp.type = 'bandpass';
-    roomBp.frequency.value = 280;
-    roomBp.Q.value = 0.65;
+    roomBp.frequency.value = 210;
+    roomBp.Q.value = 1.2;
 
     const roomGain = ctx.createGain();
-    roomGain.gain.value = 0.34;
+    roomGain.gain.value = 0.14;
 
     roomSrc.connect(roomBp);
     roomBp.connect(roomGain);
-    roomGain.connect(bus.gain);
+    roomGain.connect(roomLp);
     roomSrc.start();
     bus.nodes.push(roomSrc, roomBp, roomGain);
 
-    // 2. Multi-band vocal formant chatter murmur (warm, unintelligible cafe voices)
-    const pinkBuf = this.createColoredNoiseBuffer(ctx, 5.0, 'pink');
-    const formantBands = [
-      { freq: 440, q: 1.6, lfoHz: 0.37, depth: 110, level: 0.38 },
-      { freq: 920, q: 2.1, lfoHz: 0.53, depth: 210, level: 0.28 },
-      { freq: 1580, q: 2.4, lfoHz: 0.71, depth: 260, level: 0.14 },
+    // Vowel formant presets (F1, F2) for muffled human conversational murmur
+    const vowels: Array<[number, number]> = [
+      [680, 1180], // "a"
+      [480, 1650], // "e"
+      [340, 1950], // "i"
+      [460, 880],  // "o"
+      [360, 760],  // "u"
+      [540, 1340], // schwa
     ];
 
-    formantBands.forEach((band) => {
-      const src = ctx.createBufferSource();
-      src.buffer = pinkBuf;
-      src.loop = true;
+    // Helper: synthesize one natural muffled conversational phrase of 3–6 syllables
+    const speakMuffledPhrase = (basePitch: number, panPos: number, loudness: number) => {
+      if (!bus.active) return;
+      const now = ctx.currentTime;
+      const syllableCount = 3 + Math.floor(Math.random() * 4);
+      let cursor = now + Math.random() * 0.08;
 
-      const bp = ctx.createBiquadFilter();
-      bp.type = 'bandpass';
-      bp.frequency.value = band.freq;
-      bp.Q.value = band.q;
+      const pan = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+      if (pan) {
+        pan.pan.value = panPos;
+        pan.connect(roomLp);
+      }
+      const dest: AudioNode = pan ?? roomLp;
 
-      // Subtle speech-cadence amplitude & formant swell
-      const lfo = ctx.createOscillator();
-      lfo.type = 'sine';
-      lfo.frequency.value = band.lfoHz;
-      const lfoFreqGain = ctx.createGain();
-      lfoFreqGain.gain.value = band.depth;
-      lfo.connect(lfoFreqGain);
-      lfoFreqGain.connect(bp.frequency);
+      for (let s = 0; s < syllableCount; s++) {
+        const dur = 0.095 + Math.random() * 0.115;
+        const gap = 0.025 + Math.random() * 0.055;
+        const [f1Freq, f2Freq] = vowels[Math.floor(Math.random() * vowels.length)];
 
-      const ampLfo = ctx.createOscillator();
-      ampLfo.type = 'sine';
-      ampLfo.frequency.value = band.lfoHz * 1.45;
-      const ampLfoGain = ctx.createGain();
-      ampLfoGain.gain.value = band.level * 0.28;
+        // Slight conversational pitch contour across phrase (rises slightly mid-phrase, falls at end)
+        const contour =
+          s === syllableCount - 1
+            ? 0.92 + Math.random() * 0.05
+            : 0.97 + Math.random() * 0.11;
+        const f0Start = basePitch * contour;
+        const f0End = f0Start * (0.94 + Math.random() * 0.08);
 
-      const chGain = ctx.createGain();
-      chGain.gain.value = band.level;
-      ampLfo.connect(ampLfoGain);
-      ampLfoGain.connect(chGain.gain);
+        // Glottal voice source (sawtooth gives rich vocal harmonics without white-noise hiss)
+        const glottal = ctx.createOscillator();
+        glottal.type = 'sawtooth';
+        glottal.frequency.setValueAtTime(f0Start, cursor);
+        glottal.frequency.linearRampToValueAtTime(f0End, cursor + dur);
 
-      src.connect(bp);
-      bp.connect(chGain);
-      chGain.connect(bus.gain);
+        // Dual parallel vowel formant filters (F1 + F2)
+        const f1 = ctx.createBiquadFilter();
+        f1.type = 'bandpass';
+        f1.frequency.setValueAtTime(f1Freq, cursor);
+        f1.Q.value = 5.2;
 
-      src.start(0, Math.random() * 2.5);
-      lfo.start();
-      ampLfo.start();
-      bus.nodes.push(src, bp, lfo, lfoFreqGain, ampLfo, ampLfoGain, chGain);
+        const f2 = ctx.createBiquadFilter();
+        f2.type = 'bandpass';
+        f2.frequency.setValueAtTime(f2Freq, cursor);
+        f2.Q.value = 6.0;
+
+        const f2Gain = ctx.createGain();
+        f2Gain.gain.value = 0.45;
+
+        const sylGain = ctx.createGain();
+        const peak = loudness * (0.75 + Math.random() * 0.45);
+        sylGain.gain.setValueAtTime(0.0001, cursor);
+        sylGain.gain.linearRampToValueAtTime(peak, cursor + dur * 0.28);
+        sylGain.gain.exponentialRampToValueAtTime(0.0001, cursor + dur);
+
+        glottal.connect(f1);
+        glottal.connect(f2);
+        f1.connect(sylGain);
+        f2.connect(f2Gain);
+        f2Gain.connect(sylGain);
+        sylGain.connect(dest);
+
+        glottal.start(cursor);
+        glottal.stop(cursor + dur + 0.02);
+
+        cursor += dur + gap;
+      }
+    };
+
+    // 2. Five independent background patron voice streams (varied male & female voices across stereo field)
+    const patrons = [
+      { pitch: 118, pan: -0.68, vol: 0.11, interval: 430 },
+      { pitch: 196, pan: -0.32, vol: 0.095, interval: 510 },
+      { pitch: 142, pan: 0.08, vol: 0.085, interval: 470 },
+      { pitch: 222, pan: 0.44, vol: 0.095, interval: 560 },
+      { pitch: 108, pan: 0.72, vol: 0.105, interval: 610 },
+    ];
+
+    patrons.forEach((patron) => {
+      // Immediate warm startup chatter so crowd is audible right away
+      if (Math.random() < 0.75) {
+        speakMuffledPhrase(
+          patron.pitch * (0.94 + Math.random() * 0.12),
+          patron.pan,
+          patron.vol
+        );
+      }
+      const timer = window.setInterval(() => {
+        if (!bus.active || Math.random() > 0.68) return;
+        speakMuffledPhrase(
+          patron.pitch * (0.92 + Math.random() * 0.16),
+          Math.max(-0.85, Math.min(0.85, patron.pan + (Math.random() - 0.5) * 0.25)),
+          patron.vol
+        );
+      }, patron.interval);
+      bus.timers.push(timer);
     });
 
-    // 3. Soft conversational voice swells + occasional ceramic cup clinks & distant steam
-    const cafeDetailTimer = window.setInterval(() => {
+    // 3. Authentic Cafe Foley: ceramic cup/saucer clinks, spoon stirs, soft wooden table thud
+    const cafeFoleyTimer = window.setInterval(() => {
       if (!bus.active) return;
       const roll = Math.random();
       const now = ctx.currentTime;
 
-      if (roll < 0.22) {
-        // Distant porcelain coffee cup / spoon clink
-        const base = 2450 + Math.random() * 1450;
-        [1, 1.84, 2.72].forEach((ratio, idx) => {
-          const osc = ctx.createOscillator();
-          const g = ctx.createGain();
-          osc.type = 'sine';
-          osc.frequency.setValueAtTime(base * ratio, now);
-          const peak = idx === 0 ? 0.032 : idx === 1 ? 0.018 : 0.009;
-          g.gain.setValueAtTime(0.0001, now);
-          g.gain.linearRampToValueAtTime(peak, now + 0.003);
-          g.gain.exponentialRampToValueAtTime(0.0001, now + 0.14 + Math.random() * 0.09);
-          osc.connect(g);
-          g.connect(bus.gain);
-          osc.start(now);
-          osc.stop(now + 0.26);
-        });
-      } else if (roll < 0.45) {
-        // Brief distant voice cadence murmur swell
-        const dur = 0.28 + Math.random() * 0.36;
-        const src = ctx.createBufferSource();
-        src.buffer = pinkBuf;
-        const bp = ctx.createBiquadFilter();
-        bp.type = 'bandpass';
-        bp.frequency.setValueAtTime(480 + Math.random() * 620, now);
-        bp.frequency.linearRampToValueAtTime(420 + Math.random() * 480, now + dur);
-        bp.Q.value = 3.2;
+      if (roll < 0.36) {
+        // Crisp porcelain coffee cup / saucer clink (sometimes double-tap like stirring a spoon)
+        const taps = Math.random() < 0.42 ? 2 : 1;
+        for (let t = 0; t < taps; t++) {
+          const hitTime = now + t * (0.11 + Math.random() * 0.08);
+          const base = 2400 + Math.random() * 1450;
+          const pan = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+          if (pan) {
+            pan.pan.value = (Math.random() - 0.5) * 1.3;
+            pan.connect(bus.gain);
+          }
+          const dest: AudioNode = pan ?? bus.gain;
 
+          [1, 1.86, 2.74].forEach((ratio, idx) => {
+            const osc = ctx.createOscillator();
+            const g = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(base * ratio, hitTime);
+            const peak = (idx === 0 ? 0.055 : idx === 1 ? 0.032 : 0.016) * (t === 0 ? 1 : 0.72);
+            g.gain.setValueAtTime(0.0001, hitTime);
+            g.gain.linearRampToValueAtTime(peak, hitTime + 0.0025);
+            g.gain.exponentialRampToValueAtTime(0.0001, hitTime + 0.13 + Math.random() * 0.08);
+            osc.connect(g);
+            g.connect(dest);
+            osc.start(hitTime);
+            osc.stop(hitTime + 0.24);
+          });
+        }
+      } else if (roll < 0.52) {
+        // Soft distant ceramic mug placed onto wooden cafe table (warm low-mid knock)
+        const osc = ctx.createOscillator();
         const g = ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(165 + Math.random() * 45, now);
+        osc.frequency.exponentialRampToValueAtTime(78, now + 0.045);
         g.gain.setValueAtTime(0.0001, now);
-        g.gain.linearRampToValueAtTime(0.085, now + dur * 0.35);
-        g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
-
-        src.connect(bp);
-        bp.connect(g);
+        g.gain.linearRampToValueAtTime(0.09, now + 0.004);
+        g.gain.exponentialRampToValueAtTime(0.0001, now + 0.065);
+        osc.connect(g);
         g.connect(bus.gain);
-        src.start(now, Math.random() * 3.5, dur + 0.05);
-      } else if (roll > 0.94) {
-        // Subtle distant espresso machine steam release
-        const dur = 0.65 + Math.random() * 0.55;
-        const src = ctx.createBufferSource();
-        src.buffer = pinkBuf;
-        const hp = ctx.createBiquadFilter();
-        hp.type = 'highpass';
-        hp.frequency.value = 2600;
-        const lp = ctx.createBiquadFilter();
-        lp.type = 'lowpass';
-        lp.frequency.value = 5400;
-
-        const g = ctx.createGain();
-        g.gain.setValueAtTime(0.0001, now);
-        g.gain.linearRampToValueAtTime(0.024, now + 0.15);
-        g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
-
-        src.connect(hp);
-        hp.connect(lp);
-        lp.connect(g);
-        g.connect(bus.gain);
-        src.start(now, Math.random() * 2.5, dur + 0.05);
+        osc.start(now);
+        osc.stop(now + 0.08);
       }
-    }, 850);
-    bus.timers.push(cafeDetailTimer);
+    }, 1050);
+    bus.timers.push(cafeFoleyTimer);
   }
 }
 

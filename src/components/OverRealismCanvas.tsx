@@ -22,8 +22,11 @@ interface OverRealismCanvasProps {
   inkOpacity: number;
   inkTextShadow: string;
   paginationEnabled: boolean;
+  pageHeightPx?: number;
   showMarginBrackets?: boolean;
   showRightMarginGuide?: boolean;
+  zoomScale?: number;
+  isPreviewMode?: boolean;
   onFreePositionClick: (x: number, y: number) => void;
 }
 
@@ -47,8 +50,11 @@ export const OverRealismCanvas: React.FC<OverRealismCanvasProps> = ({
   inkOpacity,
   inkTextShadow,
   paginationEnabled,
+  pageHeightPx = PAGE_CONTENT_HEIGHT_PX,
   showMarginBrackets = true,
   showRightMarginGuide = false,
+  zoomScale = 1,
+  isPreviewMode = false,
   onFreePositionClick,
 }) => {
   const redInkColor = isDarkPaper ? '#e06d5e' : '#9c261d';
@@ -67,18 +73,24 @@ export const OverRealismCanvas: React.FC<OverRealismCanvasProps> = ({
     minHeight,
     Math.ceil(padTop + maxStrokeY + lineHeightPx * 4 + padBottom)
   );
+  const contentHeightForPages = Math.max(
+    pageHeightPx,
+    Math.ceil(padTop + maxStrokeY + lineHeightPx * 3 + 90)
+  );
   const totalPages = paginationEnabled
-    ? Math.max(1, Math.ceil(rawHeight / PAGE_CONTENT_HEIGHT_PX))
+    ? Math.max(1, Math.ceil(contentHeightForPages / pageHeightPx))
     : 1;
   const computedHeight = paginationEnabled
-    ? totalPages * PAGE_CONTENT_HEIGHT_PX
+    ? totalPages * pageHeightPx
     : rawHeight;
 
-  // Raw, un-snapped analog paper positioning on click (must eyeball alignment with the Typeguide!)
+  // Raw, un-snapped analog paper positioning on click (disabled during Preview Mode)
   const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (isPreviewMode) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    const rawX = e.clientX - rect.left - padX;
-    const rawY = e.clientY - rect.top - padTop - lineHeightPx * 0.5;
+    const safeScale = zoomScale > 0.1 ? zoomScale : 1;
+    const rawX = (e.clientX - rect.left) / safeScale - padX;
+    const rawY = (e.clientY - rect.top) / safeScale - padTop - lineHeightPx * 0.5;
     const clampedX = Math.max(0, Math.min(maxPhysicalPx, rawX));
     const clampedY = Math.max(0, rawY);
     onFreePositionClick(clampedX, clampedY);
@@ -89,8 +101,11 @@ export const OverRealismCanvas: React.FC<OverRealismCanvasProps> = ({
       role="textbox"
       aria-label="Lembar mesin ketik Over-Realism"
       aria-multiline="true"
+      aria-readonly={isPreviewMode}
       onClick={handleClick}
-      className={`relative z-10 w-full cursor-crosshair select-none ${fontClassName}`}
+      className={`relative z-10 w-full select-none ${
+        isPreviewMode ? 'cursor-grab active:cursor-grabbing' : 'cursor-crosshair'
+      } ${fontClassName}`}
       style={{
         height: `${computedHeight}px`,
         fontSize: `${fontSize}px`,
