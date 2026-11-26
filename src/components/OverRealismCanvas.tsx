@@ -23,6 +23,7 @@ interface OverRealismCanvasProps {
   inkTextShadow: string;
   paginationEnabled: boolean;
   showMarginBrackets?: boolean;
+  showRightMarginGuide?: boolean;
   onFreePositionClick: (x: number, y: number) => void;
 }
 
@@ -47,6 +48,7 @@ export const OverRealismCanvas: React.FC<OverRealismCanvasProps> = ({
   inkTextShadow,
   paginationEnabled,
   showMarginBrackets = true,
+  showRightMarginGuide = false,
   onFreePositionClick,
 }) => {
   const redInkColor = isDarkPaper ? '#e06d5e' : '#9c261d';
@@ -119,18 +121,20 @@ export const OverRealismCanvas: React.FC<OverRealismCanvasProps> = ({
         </>
       )}
 
-      {/* Subtle right margin boundary guide line */}
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute top-0 bottom-0 no-print"
-        style={{
-          left: `${padX + rightMarginPx}px`,
-          width: '1px',
-          borderLeft: isDarkPaper
-            ? '1px dashed rgba(224, 109, 94, 0.14)'
-            : '1px dashed rgba(165, 58, 42, 0.16)',
-        }}
-      />
+      {/* Right margin guide line shown ONLY when actively dragging or hitting margin lock */}
+      {showRightMarginGuide && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute top-0 bottom-0 no-print"
+          style={{
+            left: `${padX + rightMarginPx}px`,
+            width: '1px',
+            borderLeft: isDarkPaper
+              ? '1px dashed rgba(224, 109, 94, 0.34)'
+              : '1px dashed rgba(165, 58, 42, 0.36)',
+          }}
+        />
+      )}
 
       {/* Empty sheet subtle cue */}
       {strokes.length === 0 && (

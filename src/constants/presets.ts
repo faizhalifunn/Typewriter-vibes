@@ -661,7 +661,7 @@ export const DEFAULT_SETTINGS: EditorSettings = {
   typingMode: 'standard',
   marginLeft: 0,
   marginRight: 100,
-  marginUnitVersion: 2,
+  marginUnitVersion: 3,
   tabStops: [...DEFAULT_TAB_STOPS],
   showTabRuler: true,
   ribbonColor: 'black',

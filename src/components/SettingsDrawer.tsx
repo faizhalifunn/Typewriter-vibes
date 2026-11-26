@@ -281,14 +281,55 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                 </div>
               )}
 
-              {/* Margin Kiri & Kanan fisik tetap terhadap lebar kertas (tidak terpengaruh ukuran huruf) */}
+              {/* Margin & Lebar Ruang Tulis (fisik tetap terhadap lebar kertas, bebas & luas) */}
               <div className="pt-2 space-y-3 border-t border-white/8">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-xs font-medium text-[#ece5db]">Lebar Ruang Tulis & Margin</div>
+                    <div className="text-[11px] text-[#91877b]">
+                      Tetap stabil saat ukuran huruf berubah · Bisa juga diseret langsung di penggaris atas
+                    </div>
+                  </div>
+                  <span className="font-mono text-[11px] tabular-nums text-[#e6b873] whitespace-nowrap">
+                    {settings.marginRight - settings.marginLeft}%
+                  </span>
+                </div>
+
+                {/* Preset Lebar Cepat */}
+                <div className="grid grid-cols-4 gap-1.5 text-[11px]">
+                  {[
+                    { label: 'Penuh', left: 0, right: 100 },
+                    { label: 'Luas', left: 6, right: 94 },
+                    { label: 'Naskah', left: 12, right: 88 },
+                    { label: 'Puisi', left: 20, right: 80 },
+                  ].map((preset) => {
+                    const isActive =
+                      settings.marginLeft === preset.left && settings.marginRight === preset.right;
+                    return (
+                      <button
+                        key={preset.label}
+                        type="button"
+                        onClick={() => {
+                          onUpdate('marginLeft', preset.left);
+                          onUpdate('marginRight', preset.right);
+                        }}
+                        className={`px-2 py-1.5 rounded border transition-colors whitespace-nowrap ${
+                          isActive
+                            ? 'bg-[#2a2219] border-[#e6b873]/55 text-[#f5d59c] font-medium'
+                            : 'bg-[#141210] border-white/8 text-[#b9afa2] hover:bg-[#231e19] hover:text-[#ece5db]'
+                        }`}
+                      >
+                        {preset.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
                 <SliderControl
                   label="Margin Kiri"
-                  hint="Mengikuti lebar fisik kertas, tetap stabil saat ukuran huruf berubah"
                   value={settings.marginLeft}
                   min={0}
-                  max={Math.min(40, Math.max(0, settings.marginRight - 25))}
+                  max={Math.min(45, Math.max(0, settings.marginRight - 12))}
                   unit="%"
                   onChange={(v) => onUpdate('marginLeft', v)}
                 />
@@ -296,7 +337,7 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                 <SliderControl
                   label="Margin Kanan"
                   value={settings.marginRight}
-                  min={Math.max(50, settings.marginLeft + 25)}
+                  min={Math.max(55, settings.marginLeft + 12)}
                   max={100}
                   unit="%"
                   onChange={(v) => onUpdate('marginRight', v)}

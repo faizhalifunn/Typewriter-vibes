@@ -73,11 +73,11 @@ export interface RealismCursor {
 export interface EditorSettings {
   // Core Mode & Margins (physical % of printable paper width, shared across Standard & Over-Realism)
   typingMode: TypingModeId;
-  marginLeft: number; // 0 - 40 (% from left printable edge)
-  marginRight: number; // 50 - 100 (% from left printable edge)
-  marginUnitVersion?: number; // 2 = paper-fixed percentage margins
-  tabStops: number[]; // sorted custom tab stops (% of printable width, 4 - 96)
-  showTabRuler: boolean; // show interactive top-of-paper tab ruler
+  marginLeft: number; // 0 - 45 (% from left printable edge)
+  marginRight: number; // 55 - 100 (% from left printable edge)
+  marginUnitVersion?: number; // 3 = wide paper-fixed margins with direct drag ruler
+  tabStops: number[]; // sorted custom tab stops (% of printable width, 2 - 98)
+  showTabRuler: boolean; // show interactive top-of-paper ruler for margins & tab stops
   ribbonColor: RibbonColorId;
   typebarAnimation: boolean;
   typebarJamEnabled: boolean;

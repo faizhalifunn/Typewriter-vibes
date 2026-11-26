@@ -56,22 +56,16 @@ function loadSavedSettings(): EditorSettings {
     const raw = localStorage.getItem(STORAGE_SETTINGS_KEY);
     if (!raw) return DEFAULT_SETTINGS;
     const parsed = JSON.parse(raw);
-    const isNewMarginUnit = parsed.marginUnitVersion === 2;
+    const isV3Margin = parsed.marginUnitVersion === 3;
     const migratedLeft =
-      typeof parsed.marginLeft === 'number'
-        ? isNewMarginUnit
-          ? Math.max(0, Math.min(40, Math.round(parsed.marginLeft)))
-          : Math.max(0, Math.min(35, Math.round((parsed.marginLeft / 60) * 100)))
+      isV3Margin && typeof parsed.marginLeft === 'number'
+        ? Math.max(0, Math.min(45, Math.round(parsed.marginLeft)))
         : DEFAULT_SETTINGS.marginLeft;
     const migratedRight =
-      typeof parsed.marginRight === 'number'
-        ? isNewMarginUnit
-          ? Math.max(50, Math.min(100, Math.round(parsed.marginRight)))
-          : parsed.marginRight >= 54
-            ? 100
-            : Math.max(55, Math.min(100, Math.round((parsed.marginRight / 60) * 100)))
+      isV3Margin && typeof parsed.marginRight === 'number'
+        ? Math.max(55, Math.min(100, Math.round(parsed.marginRight)))
         : DEFAULT_SETTINGS.marginRight;
-    const safeLeft = Math.min(migratedLeft, migratedRight - 25);
+    const safeLeft = Math.min(migratedLeft, migratedRight - 12);
 
     return {
       ...DEFAULT_SETTINGS,
@@ -90,8 +84,8 @@ function loadSavedSettings(): EditorSettings {
           ? parsed.typingMode
           : DEFAULT_SETTINGS.typingMode,
       marginLeft: Math.max(0, safeLeft),
-      marginRight: Math.max(50, migratedRight),
-      marginUnitVersion: 2,
+      marginRight: Math.max(55, migratedRight),
+      marginUnitVersion: 3,
       tabStops: Array.isArray(parsed.tabStops)
         ? Array.from(
             new Set<number>(
@@ -338,19 +332,19 @@ export default function App() {
 
   const isCompactViewport = viewport.width < 820;
   const paperWidth = isCompactViewport
-    ? Math.max(300, viewport.width - 28)
+    ? Math.max(300, viewport.width - (isUnlimitedPaper ? 16 : 24))
     : isUnlimitedPaper
-      ? 860
-      : 780;
-  const padX = isCompactViewport ? 28 : 68;
-  const padTop = isCompactViewport ? 72 : 108;
+      ? Math.max(820, Math.min(viewport.width - 32, 1360))
+      : Math.max(760, Math.min(viewport.width - 48, 1040));
+  const padX = isCompactViewport ? 16 : isUnlimitedPaper ? 32 : 38;
+  const padTop = isCompactViewport ? 68 : 96;
   const padBottom = Math.max(360, Math.round(viewport.height * 0.52));
 
-  // Fixed physical paper margins (% of printable paper width) — stays rock-solid regardless of fontSize or letterSpacing!
-  const printableWidth = Math.max(200, paperWidth - padX * 2);
+  // Generous physical paper margins (% of wide printable canvas) — steady across any font size!
+  const printableWidth = Math.max(240, paperWidth - padX * 2);
   const leftMarginPx = (settings.marginLeft / 100) * printableWidth;
   const rightMarginPx = (settings.marginRight / 100) * printableWidth;
-  const maxPhysicalPx = printableWidth + Math.round(padX * 0.55);
+  const maxPhysicalPx = printableWidth + Math.round(padX * 0.65);
   const standardPadLeft = Math.round(padX + leftMarginPx);
   const standardPadRight = Math.max(padX, Math.round(padX + (printableWidth - rightMarginPx)));
 
@@ -1958,82 +1952,13 @@ export default function App() {
         </div>
       </header>
 
-      {/* Unified Carriage & Margin Rail (Margin Kiri/Kanan for BOTH Standard & Over-Realism; Bichrome & MR for Over-Realism) */}
+      {/* Sleek Top Ribbon & Carriage Rail (margins moved to direct ruler drag + Settings for a cleaner canvas) */}
       <div
         onMouseEnter={() => setChromeVisible(true)}
-        className={`fixed top-14 left-1/2 -translate-x-1/2 z-30 flex flex-wrap items-center justify-center gap-x-3.5 gap-y-1.5 px-4 py-1.5 rounded-lg bg-[#171411]/86 border border-[#f5e6cf]/11 backdrop-blur-md text-[11px] text-[#d3cabd] shadow-lg transition-opacity duration-300 no-print max-w-[95vw] ${
+        className={`fixed top-14 left-1/2 -translate-x-1/2 z-30 flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 px-3.5 py-1.5 rounded-lg bg-[#171411]/86 border border-[#f5e6cf]/11 backdrop-blur-md text-[11px] text-[#d3cabd] shadow-lg transition-opacity duration-300 no-print max-w-[95vw] ${
           showTopChrome ? 'opacity-100' : 'opacity-12 hover:opacity-100'
         }`}
       >
-        {/* Left Margin Control (Paper-fixed %, independent of font size) */}
-        <div className="flex items-center gap-1.5 whitespace-nowrap">
-          <span className="text-[#968c7f]">Margin Kiri</span>
-          <button
-            type="button"
-            onClick={() => {
-              updateSetting('marginLeft', Math.max(0, settings.marginLeft - 5));
-              focusActiveEditor();
-            }}
-            className="h-5 w-5 rounded bg-white/8 hover:bg-white/15 text-[#f2e8da] inline-flex items-center justify-center"
-            aria-label="Geser margin kiri ke kiri"
-          >
-            −
-          </button>
-          <span className="font-mono tabular-nums w-8 text-center">{settings.marginLeft}%</span>
-          <button
-            type="button"
-            onClick={() => {
-              updateSetting(
-                'marginLeft',
-                Math.min(40, Math.min(settings.marginRight - 25, settings.marginLeft + 5))
-              );
-              focusActiveEditor();
-            }}
-            className="h-5 w-5 rounded bg-white/8 hover:bg-white/15 text-[#f2e8da] inline-flex items-center justify-center"
-            aria-label="Geser margin kiri ke kanan"
-          >
-            +
-          </button>
-        </div>
-
-        <span className="text-[#564e45]" aria-hidden="true">
-          |
-        </span>
-
-        {/* Right Margin Control (Paper-fixed %, independent of font size) */}
-        <div className="flex items-center gap-1.5 whitespace-nowrap">
-          <span className="text-[#968c7f]">Margin Kanan</span>
-          <button
-            type="button"
-            onClick={() => {
-              updateSetting(
-                'marginRight',
-                Math.max(50, Math.max(settings.marginLeft + 25, settings.marginRight - 5))
-              );
-              focusActiveEditor();
-            }}
-            className="h-5 w-5 rounded bg-white/8 hover:bg-white/15 text-[#f2e8da] inline-flex items-center justify-center"
-            aria-label="Geser margin kanan ke kiri"
-          >
-            −
-          </button>
-          <span className="font-mono tabular-nums w-9 text-center">{settings.marginRight}%</span>
-          <button
-            type="button"
-            onClick={() => {
-              updateSetting('marginRight', Math.min(100, settings.marginRight + 5));
-              focusActiveEditor();
-            }}
-            className="h-5 w-5 rounded bg-white/8 hover:bg-white/15 text-[#f2e8da] inline-flex items-center justify-center"
-            aria-label="Geser margin kanan ke kanan"
-          >
-            +
-          </button>
-        </div>
-
-        <span className="text-[#564e45]" aria-hidden="true">
-          |
-        </span>
 
         {/* Ink Ribbon Selector (Black, Blue, Red across all modes + White Correction Tape in Over-Realism) */}
         <div className="flex items-center gap-1 whitespace-nowrap">
@@ -2212,7 +2137,7 @@ export default function App() {
           }}
           onClick={focusActiveEditor}
         >
-          {/* Interactive Top-of-Paper Mechanical Tab Ruler */}
+          {/* Interactive Top-of-Paper Mechanical Margin & Tab Ruler */}
           {settings.showTabRuler && (
             <TabRuler
               padX={padX}
@@ -2223,6 +2148,8 @@ export default function App() {
               stageHeight={stageHeight}
               isDarkPaper={paperPreset.isDark}
               onToggleTabStop={handleToggleTabStop}
+              onChangeMarginLeft={(pct) => updateSetting('marginLeft', pct)}
+              onChangeMarginRight={(pct) => updateSetting('marginRight', pct)}
             />
           )}
 
@@ -2458,59 +2385,12 @@ export default function App() {
               inkTextShadow={inkTextShadow}
               paginationEnabled={settings.paginationEnabled}
               showMarginBrackets={!settings.showTabRuler}
+              showRightMarginGuide={marginLockedAlert}
               onFreePositionClick={handleRealismFreeClick}
             />
           ) : (
             <>
-              {/* Subtle Left & Right Margin Stop markers for Standard Mode (hidden when TabRuler draws them) */}
-              {!settings.showTabRuler && (
-                <>
-                  <div
-                    aria-hidden="true"
-                    className="pointer-events-none absolute top-4 h-3 border-l-2 border-t-2 no-print"
-                    style={{
-                      left: `${standardPadLeft}px`,
-                      width: '8px',
-                      borderColor: paperPreset.isDark
-                        ? 'rgba(230, 184, 115, 0.28)'
-                        : 'rgba(130, 88, 42, 0.30)',
-                    }}
-                  />
-                  <div
-                    aria-hidden="true"
-                    className="pointer-events-none absolute top-4 h-3 border-r-2 border-t-2 no-print"
-                    style={{
-                      left: `${Math.min(paperWidth - padX, padX + rightMarginPx) - 8}px`,
-                      width: '8px',
-                      borderColor: paperPreset.isDark
-                        ? 'rgba(224, 109, 94, 0.32)'
-                        : 'rgba(165, 58, 42, 0.32)',
-                    }}
-                  />
-                </>
-              )}
-              <div
-                aria-hidden="true"
-                className="pointer-events-none absolute top-0 bottom-0 no-print"
-                style={{
-                  left: `${Math.max(12, standardPadLeft - 14)}px`,
-                  width: '1px',
-                  background: paperPreset.isDark
-                    ? 'rgba(230, 184, 115, 0.07)'
-                    : 'rgba(150, 74, 58, 0.08)',
-                }}
-              />
-              <div
-                aria-hidden="true"
-                className="pointer-events-none absolute top-0 bottom-0 no-print"
-                style={{
-                  left: `${Math.min(paperWidth - padX, padX + rightMarginPx)}px`,
-                  width: '1px',
-                  borderLeft: paperPreset.isDark
-                    ? '1px dashed rgba(224, 109, 94, 0.11)'
-                    : '1px dashed rgba(165, 58, 42, 0.13)',
-                }}
-              />
+              {/* Clean unobstructed paper surface (margin guide lines appear on TabRuler hover/drag) */}
 
               {/* Hidden Mirror Div for Exact Caret (X, Y) Tracking in Standard Mode */}
               <div

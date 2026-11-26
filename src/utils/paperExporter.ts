@@ -541,8 +541,8 @@ export async function exportStyledPaperPng(
   const fontSize = settings.fontSize;
   const lineHeight = Math.round(fontSize * lineHeightRatio);
 
-  const pageWidth = 880;
-  const basePadX = 68;
+  const pageWidth = 1040;
+  const basePadX = 48;
   const padTop = 94;
   const padBottom = 120;
   const scale = 2;
